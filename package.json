@@ -1,13 +1,37 @@
 {
-  "name": "opencode_ds_peak_warning",
-  "version": "1.0.0",
-  "description": "",
-  "main": "index.js",
-  "scripts": {
-    "test": "echo \"Error: no test specified\" && exit 1"
+  "name": "ds-peak-warning",
+  "version": "0.1.0",
+  "description": "DeepSeek peak/off-peak pricing warning in the opencode TUI sidebar",
+  "keywords": ["opencode", "tui", "plugin", "deepseek", "pricing"],
+  "license": "MIT",
+  "author": "Bashar",
+  "type": "module",
+  "exports": {
+    "./tui": "./src/index.tsx"
   },
-  "keywords": [],
-  "author": "",
-  "license": "ISC",
-  "type": "commonjs"
+  "files": ["src"],
+  "scripts": {
+    "typecheck": "tsc --noEmit",
+    "sanity": "node --experimental-strip-types scripts/sanity-check.mjs",
+    "prepublishOnly": "npm run typecheck && npm run sanity",
+    "pack": "npm pack --dry-run"
+  },
+  "dependencies": {
+    "@opentui/core": "^0.5.4",
+    "@opentui/solid": "^0.5.4",
+    "solid-js": "^1.9.0"
+  },
+  "peerDependencies": {
+    "@opencode-ai/plugin": "^1.18.0"
+  },
+  "peerDependenciesMeta": {
+    "@opencode-ai/plugin": {
+      "optional": true
+    }
+  },
+  "devDependencies": {
+    "@opencode-ai/plugin": "^1.18.18",
+    "@types/node": "^26.2.0",
+    "typescript": "^5.5.0"
+  }
 }

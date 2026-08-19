@@ -1,8 +1,14 @@
 {
   "name": "ds-peak-warning",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "description": "DeepSeek peak/off-peak pricing warning in the opencode TUI sidebar",
-  "keywords": ["opencode", "tui", "plugin", "deepseek", "pricing"],
+  "keywords": [
+    "opencode",
+    "tui",
+    "plugin",
+    "deepseek",
+    "pricing"
+  ],
   "license": "MIT",
   "author": "Bashar",
   "repository": {
@@ -17,7 +23,9 @@
   "exports": {
     "./tui": "./src/index.tsx"
   },
-  "files": ["src"],
+  "files": [
+    "src"
+  ],
   "scripts": {
     "typecheck": "tsc --noEmit",
     "sanity": "node --experimental-strip-types scripts/sanity-check.mjs",

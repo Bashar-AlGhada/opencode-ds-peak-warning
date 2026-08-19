@@ -1,6 +1,6 @@
 {
   "name": "ds-peak-warning",
-  "version": "1.0.1",
+  "version": "1.0.2",
   "description": "DeepSeek peak/off-peak pricing warning in the opencode TUI sidebar",
   "keywords": [
     "opencode",

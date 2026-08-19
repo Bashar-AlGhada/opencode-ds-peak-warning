@@ -20,7 +20,7 @@ DeepSeek charges more during peak hours. The defaults are **01:00–04:00** and
    and install its dependencies:
 
    ```sh
-   git clone <this-repo-url> ~/.config/opencode/ds-peak-warning
+   git clone https://github.com/Bashar-AlGhada/opencode-ds-peak-warning ~/.config/opencode/ds-peak-warning
    cd ~/.config/opencode/ds-peak-warning
    npm install
    ```

@@ -48,15 +48,18 @@ opencode plugin ~/.config/opencode/ds-peak-warning -g
 ## Install from npm
 
 ```sh
-opencode plugin ds-peak-warning -g     # global, or without -g per project
+opencode plugin ds-peak-warningx -g     # global, or without -g per project
 ```
 
 Or from inside the opencode TUI:
 
 1. Press `ctrl+p` to open the command palette, type `plugins`, and select it.
-2. Press `shift+i` to install a plugin, type `ds-peak-warning`, and press enter.
+2. Press `shift+i` to install a plugin, type `ds-peak-warningx`, and press enter.
 3. Press `space` to toggle the scope (local project vs global), then confirm.
 4. Restart opencode.
+
+> The original name `ds-peak-warning` still works as an alias:
+> `opencode plugin "ds-peak-warning@npm:ds-peak-warningx"`.
 
 ## Usage
 
@@ -71,7 +74,7 @@ You can set the windows at install time with the `[spec, options]` tuple in `tui
 
 ```json
 {
-  "plugin": [["ds-peak-warning", { "ranges": [{ "start": "22:00", "end": "02:00" }] }]]
+  "plugin": [["ds-peak-warningx", { "ranges": [{ "start": "22:00", "end": "02:00" }] }]]
 }
 ```
 

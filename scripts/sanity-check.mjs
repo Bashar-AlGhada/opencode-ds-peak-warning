@@ -6,6 +6,7 @@ import {
   formatDays,
   formatDuration,
   formatMinutes,
+  migrateLegacyRanges,
   minutesUntilStart,
   nextOccurrence,
   nextTransition,
@@ -255,6 +256,15 @@ check("sanitize drops non-objects", sanitizeRanges([null, "hi", 42, undefined]),
 check("sanitize drops missing fields", sanitizeRanges([{ start: "01:00" }, { end: "04:00" }, {}]), [])
 check("sanitize empty input", sanitizeRanges([]), [])
 
+// --- migrateLegacyRanges (pre-day-pattern saves adopt the weekday rule) ---
+check("legacy window gains weekday pattern", migrateLegacyRanges([{ start: "01:00", end: "04:00" }], [1, 2, 3, 4, 5]), [
+  { start: "01:00", end: "04:00", days: [1, 2, 3, 4, 5] },
+])
+check("window with days untouched", migrateLegacyRanges([{ start: "22:00", end: "02:00", days: [0, 6] }], [1]), [
+  { start: "22:00", end: "02:00", days: [0, 6] },
+])
+check("migrate empty list", migrateLegacyRanges([], [1]), [])
+
 // --- toMinutes / formatMinutes ---
 check("toMinutes 00:00 -> 0", toMinutes("00:00"), 0)
 check("toMinutes 23:59 -> 1439", toMinutes("23:59"), 1439)
@@ -267,6 +277,25 @@ check("formatMinutes -1 wraps -> 23:59", formatMinutes(-1), "23:59")
 // --- utcMinutes reflects the real UTC clock ---
 const now = new Date()
 check("utcMinutes matches getUTC*", utcMinutes(now), now.getUTCHours() * 60 + now.getUTCMinutes())
+
+// --- every relative import in src/ must resolve to an existing file ---
+// Guards against broken specifiers (e.g. ".ts" pointing at a ".tsx" file),
+// which fail silently at plugin load time in opencode.
+import { existsSync, readdirSync, readFileSync } from "node:fs"
+import { dirname, join } from "node:path"
+const srcDir = new URL("../src", import.meta.url).pathname.replace(/^\/([A-Za-z]:)/, "$1")
+let importChecks = 0
+for (const file of readdirSync(srcDir)) {
+  if (!/\.(ts|tsx)$/.test(file)) continue
+  const text = readFileSync(join(srcDir, file), "utf8")
+  const specs = [...text.matchAll(/(?:from|import)\s*["'](\.[^"']+)["']/g)].map((m) => m[1])
+  for (const spec of specs) {
+    importChecks++
+    const target = join(dirname(join(srcDir, file)), spec)
+    check(`import resolves: ${file} -> ${spec}`, existsSync(target) ? "ok" : "missing", "ok")
+  }
+}
+console.log(`     (${importChecks} relative imports checked)`)
 
 console.log(failures === 0 ? "\nAll sanity checks passed." : `\n${failures} check(s) failed.`)
 process.exit(failures === 0 ? 0 : 1)

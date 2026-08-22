@@ -1,8 +1,8 @@
 /** @jsxImportSource @opentui/solid */
 import { createSignal } from "solid-js"
 import type { TuiPlugin, TuiPluginApi, TuiPluginModule } from "@opencode-ai/plugin/tui"
-import { sanitizeRanges } from "./ranges.ts"
-import { DEFAULT_RANGES, DEFAULT_SLOT_ORDER, KV_RANGES_KEY } from "./config.ts"
+import { migrateLegacyRanges, sanitizeRanges } from "./ranges.ts"
+import { DEFAULT_RANGES, DEFAULT_SLOT_ORDER, KV_RANGES_KEY, WEEKDAY_DEFAULT_DAYS } from "./config.ts"
 import type { DsPeakOptions, TimeRange } from "./types.ts"
 import { openConfigMenu } from "./dialogs.tsx"
 import { PeakPanel } from "./panel.tsx"
@@ -19,7 +19,7 @@ function loadRanges(api: TuiPluginApi, opts: Partial<DsPeakOptions>): TimeRange[
     const fromKv = api.kv.get<unknown>(KV_RANGES_KEY)
     if (Array.isArray(fromKv)) {
       const cleaned = sanitizeRanges(fromKv)
-      if (cleaned.length) return cleaned
+      if (cleaned.length) return migrateLegacyRanges(cleaned, WEEKDAY_DEFAULT_DAYS)
     }
   } catch {
     // ignore kv read errors, fall through
@@ -27,7 +27,7 @@ function loadRanges(api: TuiPluginApi, opts: Partial<DsPeakOptions>): TimeRange[
   const fromOpts = opts.ranges
   if (Array.isArray(fromOpts) && fromOpts.length) {
     const cleaned = sanitizeRanges(fromOpts)
-    if (cleaned.length) return cleaned
+    if (cleaned.length) return migrateLegacyRanges(cleaned, WEEKDAY_DEFAULT_DAYS)
   }
   return DEFAULT_RANGES.map((r) => ({ ...r, days: r.days ? [...r.days] : undefined }))
 }
@@ -48,29 +48,18 @@ const tui: TuiPlugin = async (api, options) => {
 
   const order = typeof opts.order === "number" ? opts.order : DEFAULT_SLOT_ORDER
 
-  // Render the pricing panel in the session sidebar.
+  // Register every slot in ONE call — duplicate orders across separate
+  // registrations are rejected by newer hosts, which would silently drop
+  // one of the two slots.
   try {
     api.slots.register({
       order,
       slots: {
+        // Render the pricing panel in the session sidebar.
         sidebar_content(ctx) {
           return <PeakPanel theme={ctx.theme.current} ranges={ranges} />
         },
-      },
-    })
-  } catch (err) {
-    api.ui.toast({
-      variant: "error",
-      title: "ds-peak-warningx",
-      message: `Sidebar slot registration failed: ${(err as Error).message}`,
-    })
-  }
-
-  // Render the minimal PEAK/OFF-PEAK dot on the landing screen.
-  try {
-    api.slots.register({
-      order,
-      slots: {
+        // Render the minimal PEAK/OFF-PEAK dot on the landing screen.
         home_prompt_right(ctx) {
           return <PeakHomeIndicator theme={ctx.theme.current} ranges={ranges} />
         },
@@ -80,7 +69,7 @@ const tui: TuiPlugin = async (api, options) => {
     api.ui.toast({
       variant: "error",
       title: "ds-peak-warningx",
-      message: `Home indicator slot registration failed: ${(err as Error).message}`,
+      message: `Slot registration failed: ${(err as Error).message}`,
     })
   }
 

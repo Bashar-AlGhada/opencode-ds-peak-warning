@@ -258,3 +258,7 @@ export function sanitizeRanges(list: unknown[]): TimeRange[] {
   }
   return out
 }
+/** Attach `defaultDays` to legacy windows that predate day patterns. */
+export function migrateLegacyRanges(list: TimeRange[], defaultDays: number[]): TimeRange[] {
+  return list.map((r) => (r.days ? r : { ...r, days: [...defaultDays] }))
+}

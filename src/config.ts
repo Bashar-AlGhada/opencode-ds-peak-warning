@@ -19,10 +19,13 @@ export const WEEKDAYS: readonly string[] = ["sun", "mon", "tue", "wed", "thu", "
 // Short display labels indexed by day number (0 = Sun).
 export const DAY_LABELS: string[] = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"]
 
+/** Weekdays (Mon-Fri) DeepSeek's current peak windows apply to. */
+export const WEEKDAY_DEFAULT_DAYS: number[] = [1, 2, 3, 4, 5]
+
 /** DeepSeek's documented peak windows (UTC), Monday-Friday only. */
 export const DEFAULT_RANGES: TimeRange[] = [
-  { start: "01:00", end: "04:00", days: [1, 2, 3, 4, 5] },
-  { start: "06:00", end: "10:00", days: [1, 2, 3, 4, 5] },
+  { start: "01:00", end: "04:00", days: [...WEEKDAY_DEFAULT_DAYS] },
+  { start: "06:00", end: "10:00", days: [...WEEKDAY_DEFAULT_DAYS] },
 ]
 
 // --- Plugin behavior ---

@@ -17,7 +17,9 @@ weekday-based pricing rule can be configured.
 
 - A colored `● PEAK` / `● OFF-PEAK` dot next to the prompt on the home screen.
 - A sidebar panel in every session showing current status, UTC + local time,
-  the next transition, and a countdown per window (`(active)` / `(in 5h 20m)`).
+  the next transition across days (e.g. `Next: peak at 01:00 UTC Mon` after a
+  Friday evening), and a per-window countdown that respects its weekday
+  pattern.
 - In-app editing with `/dspeak` — no config file editing. Your windows persist
   across restarts.
 
@@ -64,6 +66,15 @@ Or from inside the opencode TUI:
 2. Press `shift+i` to install a plugin, type `ds-peak-warningx`, and press enter.
 3. Press `space` to toggle the scope (local project vs global), then confirm.
 4. Restart opencode.
+
+## Updating
+
+Installed plugins don't upgrade automatically. Reinstall with the force flag
+(`-f` replaces the existing version), then restart opencode:
+
+```sh
+opencode plugin ds-peak-warningx -g -f   # keep -g if you installed globally
+```
 
 ## Usage
 

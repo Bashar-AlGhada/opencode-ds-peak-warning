@@ -1,6 +1,6 @@
 /** @jsxImportSource @opentui/solid */
 import type { TuiThemeCurrent } from "@opencode-ai/plugin/tui"
-import { formatDays, formatMinutes, utcMinutes } from "./ranges.ts"
+import { formatDays, formatDuration, formatMinutes, utcMinutes } from "./ranges.ts"
 import { DAY_LABELS } from "./config.ts"
 import type { TimeRange } from "./types.ts"
 import { usePeakStatus } from "./status.ts"
@@ -10,9 +10,11 @@ export interface PeakPanelProps {
   ranges: () => TimeRange[]
 }
 
+const MS_MIN = 60_000
+
 /** Sidebar panel sized for a narrow column: short lines, no overflowing rows. */
 export function PeakPanel(props: PeakPanelProps) {
-  const { time, status, transition, local, tz } = usePeakStatus(props.ranges)
+  const { now, time, status, transition, local, tz } = usePeakStatus(props.ranges)
   const peak = () => status().peak
 
   // City-only timezone label ("Asia/Damascus" -> "Damascus").
@@ -26,6 +28,9 @@ export function PeakPanel(props: PeakPanelProps) {
       ? clock
       : `${DAY_LABELS[at.getUTCDay()]} ${clock}`
   }
+
+  // Minutes until the next flip (the scan aligns to whole minutes).
+  const untilLabel = () => formatDuration(Math.round((transition().at.getTime() - now().getTime()) / MS_MIN))
 
   return (
     <box flexShrink={0} paddingTop={1} paddingBottom={1}>
@@ -43,6 +48,8 @@ export function PeakPanel(props: PeakPanelProps) {
       <text fg={props.theme.textMuted}>
         Next: {transition().to ? "peak" : "off-peak"} {atLabel()} UTC
       </text>
+      {/* Its own countdown row */}
+      <text fg={props.theme.textMuted}>in {untilLabel()}</text>
       <text fg={props.theme.textMuted}>Windows (UTC):</text>
       {/* One short row per window; the Next line above carries the countdown */}
       {props.ranges().map((r) => {

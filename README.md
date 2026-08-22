@@ -1,10 +1,13 @@
-# ds-peak-warning
+# ds-peak-warningx
 
 An [opencode](https://opencode.ai) TUI plugin that shows DeepSeek's **peak / off-peak
 pricing windows** in your terminal, so you know when requests are more expensive.
 
-DeepSeek charges more during peak hours. The defaults are **01:00–04:00** and
-**06:00–10:00 UTC**; everything else is off-peak.
+DeepSeek charges more during peak hours. The default schedule follows their
+current billing rules: peak windows **01:00–04:00** and **06:00–10:00 UTC**
+on weekdays, and **fully off-peak weekends** — evaluated by the Beijing
+calendar day. Every window can carry its own day-of-week pattern, so any
+weekday-based pricing rule can be configured.
 
 ## What you get
 
@@ -20,8 +23,8 @@ DeepSeek charges more during peak hours. The defaults are **01:00–04:00** and
    and install its dependencies:
 
    ```sh
-   git clone https://github.com/Bashar-AlGhada/opencode-ds-peak-warning ~/.config/opencode/ds-peak-warning
-   cd ~/.config/opencode/ds-peak-warning
+   git clone https://github.com/Bashar-AlGhada/opencode-ds-peak-warning ~/.config/opencode/ds-peak-warningx
+   cd ~/.config/opencode/ds-peak-warningx
    npm install
    ```
 
@@ -30,7 +33,7 @@ DeepSeek charges more during peak hours. The defaults are **01:00–04:00** and
    ```json
    {
      "$schema": "https://opencode.ai/tui.json",
-     "plugin": ["./ds-peak-warning/src/index.tsx"]
+     "plugin": ["./ds-peak-warningx/src/index.tsx"]
    }
    ```
 
@@ -42,13 +45,13 @@ DeepSeek charges more during peak hours. The defaults are **01:00–04:00** and
 Or use the CLI instead of step 2:
 
 ```sh
-opencode plugin ~/.config/opencode/ds-peak-warning -g
+opencode plugin ~/.config/opencode/ds-peak-warningx -g
 ```
 
 ## Install from npm
 
 ```sh
-opencode plugin ds-peak-warningx -g     # global, or without -g per project
+opencode plugin ds-peak-warningx -g    # global, or without -g per project
 ```
 
 Or from inside the opencode TUI:
@@ -58,15 +61,14 @@ Or from inside the opencode TUI:
 3. Press `space` to toggle the scope (local project vs global), then confirm.
 4. Restart opencode.
 
-> The original name `ds-peak-warning` still works as an alias:
-> `opencode plugin "ds-peak-warning@npm:ds-peak-warningx"`.
-
 ## Usage
 
 - The sidebar panel shows `UTC` time, your local time + timezone, and the next
   status change (e.g. `Next: off-peak at 04:00 UTC`).
 - Press `/` and run `dspeak` to add, remove, or reset peak windows.
-  Format: `HH:MM-HH:MM` in UTC, e.g. `22:00-02:00` (wrapping midnight is fine).
+  Format: `HH:MM-HH:MM` in UTC, optionally restricted to weekdays:
+  `22:00-02:00`, `06:00-10:00 Mon-Fri`, `14:00-16:00 Sat,Sun`, `20:00-21:00 Wed`.
+  Days refer to the Beijing calendar day (wrapping midnight is fine).
 
 ## Options
 
@@ -74,11 +76,17 @@ You can set the windows at install time with the `[spec, options]` tuple in `tui
 
 ```json
 {
-  "plugin": [["ds-peak-warningx", { "ranges": [{ "start": "22:00", "end": "02:00" }] }]]
+  "plugin": [["ds-peak-warningx", { "ranges": [
+    { "start": "01:00", "end": "04:00", "days": [1, 2, 3, 4, 5] },
+    { "start": "22:00", "end": "02:00" }
+  ] }]]
 }
 ```
 
-- `ranges` — peak windows overriding the defaults (later in-app edits win and persist).
+- `ranges` — peak windows overriding the defaults. Each window may carry a
+  `days` array (0 = Sunday … 6 = Saturday, Beijing calendar day) restricting
+  it to those weekdays; omit `days` for an every-day window. Later in-app
+  edits via `/dspeak` win and persist.
 - `order` — sidebar slot order (default `150`).
 
 ## Development

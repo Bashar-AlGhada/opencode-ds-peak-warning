@@ -1,8 +1,9 @@
 /** @jsxImportSource @opentui/solid */
 import type { TuiThemeCurrent } from "@opencode-ai/plugin/tui"
-import { formatDuration, formatMinutes, minutesUntilStart } from "./ranges"
-import type { TimeRange } from "./types"
-import { usePeakStatus } from "./status"
+import { formatDays, formatDuration, formatMinutes, nextOccurrence, utcMinutes } from "./ranges.ts"
+import { DAY_LABELS } from "./config.ts"
+import type { TimeRange } from "./types.ts"
+import { usePeakStatus } from "./status.ts"
 
 export interface PeakPanelProps {
   theme: TuiThemeCurrent
@@ -11,13 +12,22 @@ export interface PeakPanelProps {
 
 /** Sidebar panel shown inside a session: status, times, next transition, and per-window countdowns. */
 export function PeakPanel(props: PeakPanelProps) {
-  const { time, status, transition, local, tz } = usePeakStatus(props.ranges)
+  const { now, time, status, transition, local, tz } = usePeakStatus(props.ranges)
   const peak = () => status().peak
+
+  // "04:00 UTC" today, or "01:00 UTC Mon" when the flip is on another day.
+  const atLabel = () => {
+    const at = transition().at
+    const clock = `${formatMinutes(utcMinutes(at))} UTC`
+    return at.toISOString().slice(0, 10) === new Date().toISOString().slice(0, 10)
+      ? clock
+      : `${clock} ${DAY_LABELS[at.getUTCDay()]}`
+  }
 
   return (
     <box flexShrink={0} paddingTop={1} paddingBottom={1}>
       <text fg={props.theme.text}>
-        <b>DeepSeek Pricing</b>
+        <b>DeepSeek Pricing</b>      <text fg={props.theme.textMuted}>Edit: /dspeak</text>
       </text>
       {/* Current status dot, colored amber when peak, green when off-peak */}
       <text fg={peak() ? props.theme.warning : props.theme.success}>
@@ -27,23 +37,28 @@ export function PeakPanel(props: PeakPanelProps) {
       <text fg={props.theme.textMuted}>
         UTC {formatMinutes(time())} · {formatMinutes(local())} {tz}
       </text>
-      {/* When the next peak/off-peak switch happens */}
+      {/* When the next peak/off-peak switch happens (day-of-week aware) */}
       <text fg={props.theme.textMuted}>
-        Next: {transition().to ? "peak" : "off-peak"} at {formatMinutes(transition().at)} UTC
+        Next: {transition().to ? "peak" : "off-peak"} at {atLabel()}
       </text>
+      {/* Every window with its day pattern and real next occurrence */}
       <text fg={props.theme.textMuted}>Peak windows (UTC):</text>
-      {/* Each window with its countdown: "(active)" or "(in 5h 20m)" */}
       {props.ranges().map((r) => {
-        const next = minutesUntilStart(r, time())
-        const suffix = next.active ? "(active)" : `(in ${formatDuration(next.minutes)})`
+        const occ = nextOccurrence(r, now())
+        const tag = formatDays(r.days)
+        const suffix = occ.active
+          ? "(active)"
+          : occ.daysAway > 0
+            ? `(in ${formatDuration(occ.minutes)}, ${DAY_LABELS[(now().getUTCDay() + occ.daysAway) % 7]})`
+            : `(in ${formatDuration(occ.minutes)})`
         return (
           <text fg={props.theme.warning}>
-            {r.start}-{r.end} {suffix}
+            {r.start}-{r.end}
+            {tag ? ` ${tag}` : ""} {suffix}
           </text>
         )
       })}
-      <text fg={props.theme.textMuted}>(all other hours off-peak)</text>
-      <text fg={props.theme.textMuted}>Edit: /dspeak</text>
+
     </box>
   )
 }

@@ -1,25 +1,22 @@
 /** @jsxImportSource @opentui/solid */
 import { createSignal } from "solid-js"
 import type { TuiPlugin, TuiPluginApi, TuiPluginModule } from "@opencode-ai/plugin/tui"
-import { DEFAULT_RANGES, sanitizeRanges } from "./ranges"
-import type { DsPeakOptions, TimeRange } from "./types"
-import { openConfigMenu } from "./dialogs"
-import { PeakPanel } from "./panel"
-import { PeakHomeIndicator } from "./home"
-
-// KV key where user-edited peak windows are persisted.
-const KV_RANGES = "ds-peak:ranges"
-// Default slot ordering (slots are rendered lowest-first).
-const DEFAULT_ORDER = 150
+import { sanitizeRanges } from "./ranges.ts"
+import { DEFAULT_RANGES, DEFAULT_SLOT_ORDER, KV_RANGES_KEY } from "./config.ts"
+import type { DsPeakOptions, TimeRange } from "./types.ts"
+import { openConfigMenu } from "./dialogs.tsx"
+import { PeakPanel } from "./panel.tsx"
+import { PeakHomeIndicator } from "./home.tsx"
 
 /**
- * Resolve the effective peak windows. Precedence:
- * saved KV value > plugin `ranges` option > built-in defaults.
+ * Resolve the effective peak windows. Each entry may carry a day-of-week
+ * pattern. Precedence: saved KV value > plugin `ranges` option > built-in
+ * weekday defaults.
  */
 function loadRanges(api: TuiPluginApi, opts: Partial<DsPeakOptions>): TimeRange[] {
   try {
-    // Prefer what the user last saved through /dspeak.
-    const fromKv = api.kv.get<unknown>(KV_RANGES)
+    // Prefer what the user last saved through /dspeak (day patterns included).
+    const fromKv = api.kv.get<unknown>(KV_RANGES_KEY)
     if (Array.isArray(fromKv)) {
       const cleaned = sanitizeRanges(fromKv)
       if (cleaned.length) return cleaned
@@ -32,7 +29,7 @@ function loadRanges(api: TuiPluginApi, opts: Partial<DsPeakOptions>): TimeRange[
     const cleaned = sanitizeRanges(fromOpts)
     if (cleaned.length) return cleaned
   }
-  return DEFAULT_RANGES.slice()
+  return DEFAULT_RANGES.map((r) => ({ ...r, days: r.days ? [...r.days] : undefined }))
 }
 
 const tui: TuiPlugin = async (api, options) => {
@@ -43,13 +40,13 @@ const tui: TuiPlugin = async (api, options) => {
   const save = (next: TimeRange[]) => {
     setRanges(next)
     try {
-      api.kv.set(KV_RANGES, next)
+      api.kv.set(KV_RANGES_KEY, next)
     } catch {
       // kv may be unavailable; keep in-memory state
     }
   }
 
-  const order = typeof opts.order === "number" ? opts.order : DEFAULT_ORDER
+  const order = typeof opts.order === "number" ? opts.order : DEFAULT_SLOT_ORDER
 
   // Render the pricing panel in the session sidebar.
   try {
@@ -64,7 +61,7 @@ const tui: TuiPlugin = async (api, options) => {
   } catch (err) {
     api.ui.toast({
       variant: "error",
-      title: "ds-peak-warning",
+      title: "ds-peak-warningx",
       message: `Sidebar slot registration failed: ${(err as Error).message}`,
     })
   }
@@ -82,7 +79,7 @@ const tui: TuiPlugin = async (api, options) => {
   } catch (err) {
     api.ui.toast({
       variant: "error",
-      title: "ds-peak-warning",
+      title: "ds-peak-warningx",
       message: `Home indicator slot registration failed: ${(err as Error).message}`,
     })
   }
@@ -126,7 +123,7 @@ const tui: TuiPlugin = async (api, options) => {
 
 // Plugin module contract: `id` scopes KV keys; `tui` wires up the TUI.
 const plugin: TuiPluginModule = {
-  id: "ds-peak-warning",
+  id: "ds-peak-warningx",
   tui,
 }
 

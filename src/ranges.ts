@@ -1,10 +1,5 @@
-import type { TimeRange } from "./types"
-
-// DeepSeek's documented peak windows (UTC): 01:00-04:00 and 06:00-10:00.
-export const DEFAULT_RANGES: TimeRange[] = [
-  { start: "01:00", end: "04:00" },
-  { start: "06:00", end: "10:00" },
-]
+import type { TimeRange } from "./types.ts"
+import { BEIJING_OFFSET_MS, MS_DAY, MS_MIN, TRANSITION_SCAN_DAYS, WEEKDAYS } from "./config.ts"
 
 // Matches "HH:MM" with optional single-digit hours (e.g. "1:30").
 const HHMM = /^([01]?\d|2[0-3]):([0-5]\d)$/
@@ -57,6 +52,21 @@ export function localMinutes(date: Date, timeZone: string): number {
   }
 }
 
+/**
+ * Day of week in Beijing Time (0 = Sunday ... 6 = Saturday).
+ * Beijing is fixed UTC+8 (no DST), so shifting by the offset and reading the
+ * UTC weekday is exact — no Intl needed.
+ */
+export function beijingDayOfWeek(date: Date): number {
+  const beijingDays = Math.floor((date.getTime() + BEIJING_OFFSET_MS) / MS_DAY)
+  return (((beijingDays + 4) % 7) + 7) % 7 // epoch day 0 (1970-01-01) was a Thursday
+}
+
+/** True when the window applies on the given Beijing weekday (no days = every day). */
+export function appliesOnDay(range: TimeRange, day: number): boolean {
+  return !range.days || range.days.includes(day)
+}
+
 /** True when `time` falls inside the range (start inclusive, end exclusive, midnight-wrapped). */
 export function contains(time: number, range: TimeRange): boolean {
   const s = toMinutes(range.start)
@@ -71,7 +81,7 @@ export interface StatusInfo {
   range?: TimeRange
 }
 
-/** Current status at a given time: peak if inside any window, otherwise off-peak. */
+/** Pure time-of-day check against a window list (no weekday filter). */
 export function statusAt(ranges: TimeRange[], time: number): StatusInfo {
   const t = ((time % 1440) + 1440) % 1440
   for (const range of ranges) {
@@ -80,31 +90,70 @@ export function statusAt(ranges: TimeRange[], time: number): StatusInfo {
   return { peak: false }
 }
 
-export interface Transition {
-  at: number
-  /** True when the transition enters a peak window (peak -> off-peak transitions are false). */
+/** Full status at a real moment: both the UTC clock and the Beijing weekday must match. */
+export function statusForDate(date: Date, ranges: TimeRange[]): StatusInfo {
+  const t = utcMinutes(date)
+  const day = beijingDayOfWeek(date)
+  for (const range of ranges) {
+    if (appliesOnDay(range, day) && contains(t, range)) return { peak: true, range }
+  }
+  return { peak: false }
+}
+
+export interface DateTransition {
+  at: Date
+  /** True when the transition enters a peak window. */
   to: boolean
 }
 
-/** Next status change within the next 24h, scanning minute-by-minute. */
-export function nextTransition(ranges: TimeRange[], time: number): Transition {
-  for (let t = time + 1; t < time + 24 * 60; t++) {
-    const cur = statusAt(ranges, t - 1).peak
-    const next = statusAt(ranges, t).peak
-    if (cur !== next) return { at: t % (24 * 60), to: next }
+/** Next peak/off-peak flip after a real moment, honoring each window's day pattern. */
+export function nextTransition(ranges: TimeRange[], date: Date): DateTransition {
+  const cur = statusForDate(date, ranges).peak
+  const start = Math.floor(date.getTime() / MS_MIN) * MS_MIN // align to whole minutes
+  const end = start + TRANSITION_SCAN_DAYS * MS_DAY
+  for (let t = start + MS_MIN; t <= end; t += MS_MIN) {
+    if (statusForDate(new Date(t), ranges).peak !== cur) {
+      return { at: new Date(t), to: !cur }
+    }
   }
-  return { at: (time + 1) % (24 * 60), to: statusAt(ranges, time).peak }
+  // No flip within the horizon (e.g. no windows at all): stay on current status.
+  return { at: new Date(start + MS_MIN), to: cur }
 }
 
 export interface NextOccurrence {
-  /** Whether the range is currently active (now is inside the range). */
+  /** Inside the window right now (and it applies today). */
   active: boolean
-  /** Minutes until the range next starts (1-1439 when not active, 0 when active). */
+  /** Minutes until the next start across days (0 when active). */
   minutes: number
+  /** Beijing-day distance to that next start (0 = today). */
+  daysAway: number
 }
 
-/** Time until a window's next start; "active" when now is already inside it. */
-export function minutesUntilStart(range: TimeRange, time: number): NextOccurrence {
+/** Next moment this window actually charges peak, following its day pattern. */
+export function nextOccurrence(range: TimeRange, date: Date): NextOccurrence {
+  const nowMin = ((utcMinutes(date) % 1440) + 1440) % 1440
+  const today = beijingDayOfWeek(date)
+  if (appliesOnDay(range, today) && contains(nowMin, range)) {
+    return { active: true, minutes: 0, daysAway: 0 }
+  }
+  const start = Math.floor(date.getTime() / MS_MIN) * MS_MIN // align to whole minutes
+  const end = start + TRANSITION_SCAN_DAYS * MS_DAY
+  for (let ts = start + MS_MIN; ts <= end; ts += MS_MIN) {
+    const d = new Date(ts)
+    if (appliesOnDay(range, beijingDayOfWeek(d)) && contains(utcMinutes(d), range)) {
+      return {
+        active: false,
+        minutes: Math.round((ts - date.getTime()) / MS_MIN),
+        daysAway: (beijingDayOfWeek(d) - today + 7) % 7,
+      }
+    }
+  }
+  // Unreachable for valid weekly patterns; report a full week out.
+  return { active: false, minutes: 7 * 1440, daysAway: 7 }
+}
+
+/** Pure time-of-day countdown to a window's next start ("active" when inside it). */
+export function minutesUntilStart(range: TimeRange, time: number): { active: boolean; minutes: number } {
   const t = ((time % 1440) + 1440) % 1440
   if (contains(t, range)) return { active: true, minutes: 0 }
   const s = toMinutes(range.start)
@@ -122,37 +171,90 @@ export function formatDuration(minutes: number): string {
   return `${rem}m`
 }
 
-/** Coerce an untrusted list (e.g. from KV/options) into valid TimeRanges, dropping bad entries. */
+const cap = (s: string) => s.charAt(0).toUpperCase() + s.slice(1)
+
+/** Compact day-pattern label like "Mon-Fri" or "Sun,Sat"; "" when it applies every day. */
+export function formatDays(days?: number[]): string {
+  if (!days || days.length === 0 || days.length >= 7) return ""
+  const sorted = [...days].sort((a, b) => a - b)
+  const parts: string[] = []
+  let i = 0
+  while (i < sorted.length) {
+    let j = i
+    while (j + 1 < sorted.length && sorted[j + 1] === sorted[j] + 1) j++
+    if (j - i >= 2) parts.push(`${cap(WEEKDAYS[sorted[i]])}-${cap(WEEKDAYS[sorted[j]])}`)
+    else for (let k = i; k <= j; k++) parts.push(cap(WEEKDAYS[sorted[k]]))
+    i = j + 1
+  }
+  return parts.join(",")
+}
+
+// Day token: a 3-letter code, optionally ranged like "mon-fri".
+const DAY_TOKEN = /^(sun|mon|tue|wed|thu|fri|sat)(-(sun|mon|tue|wed|thu|fri|sat))?$/
+
+function parseDayToken(token: string): number[] | null {
+  const m = DAY_TOKEN.exec(token)
+  if (!m) return null
+  const a = WEEKDAYS.indexOf(m[1])
+  if (!m[2]) return [a]
+  const b = WEEKDAYS.indexOf(m[3])
+  if (b < a) return null // reversed or wrapping ranges are rejected
+  const out: number[] = []
+  for (let i = a; i <= b; i++) out.push(i)
+  return out
+}
+
+/**
+ * Parse user input into a window. Times are required ("22:00-02:00", en/em
+ * dashes ok); an optional trailing day pattern restricts weekdays, e.g.
+ * "06:00-10:00 Mon-Fri", "14:00-16:00 sat,sun", "20:00-21:00 Wed". Days refer
+ * to the Beijing calendar day. Returns null on invalid input.
+ */
+export function parseRange(input: string): TimeRange | null {
+  const norm = input.trim().toLowerCase().replace(/[–—]/g, "-").replace(/,/g, " ")
+  if (!norm) return null
+  const tokens = norm.split(/\s+/)
+  const daySet = new Set<number>()
+  // Trailing tokens that look like day specs form the weekday pattern.
+  while (tokens.length > 1 && DAY_TOKEN.test(tokens[tokens.length - 1])) {
+    const got = parseDayToken(tokens.pop() as string)
+    if (!got) return null
+    for (const d of got) daySet.add(d)
+  }
+  const timeSpec = tokens.join("").replace(/\s*-\s*/g, "-")
+  const tm = timeSpec.split("-")
+  if (tm.length !== 2) return null
+  try {
+    toMinutes(tm[0])
+    toMinutes(tm[1])
+  } catch {
+    return null
+  }
+  const out: TimeRange = { start: tm[0], end: tm[1] }
+  if (daySet.size > 0) out.days = [...daySet].sort((a, b) => a - b)
+  return out
+}
+
+/** Coerce an untrusted list (e.g. from KV/options) into valid windows, dropping bad entries. */
 export function sanitizeRanges(list: unknown[]): TimeRange[] {
   const out: TimeRange[] = []
   for (const item of list) {
     if (!item || typeof item !== "object") continue
     const r = item as Record<string, unknown>
     if (typeof r.start !== "string" || typeof r.end !== "string") continue
+    let days: number[] | undefined
+    if (r.days !== undefined) {
+      if (!Array.isArray(r.days)) continue
+      days = [...new Set(r.days.filter((d) => Number.isInteger(d) && d >= 0 && d <= 6))].sort((a, b) => a - b)
+      if (days.length === 0) continue
+    }
     try {
       toMinutes(r.start)
       toMinutes(r.end)
     } catch {
       continue
     }
-    out.push({ start: r.start, end: r.end })
+    out.push(days ? { start: r.start, end: r.end, days } : { start: r.start, end: r.end })
   }
   return out
-}
-
-/** Parse user input like "22:00-02:00" (hyphen, en/em dash ok) into a range, or null if invalid. */
-export function parseRange(input: string): TimeRange | null {
-  const s = input.trim()
-  if (!s) return null
-  const tm = s.split(/[-–—]/)
-  if (tm.length !== 2) return null
-  const start = tm[0].trim()
-  const end = tm[1].trim()
-  try {
-    toMinutes(start)
-    toMinutes(end)
-  } catch {
-    return null
-  }
-  return { start, end }
 }

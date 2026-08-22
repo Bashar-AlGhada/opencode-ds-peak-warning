@@ -1,7 +1,8 @@
 /** @jsxImportSource @opentui/solid */
 import type { TuiPluginApi } from "@opencode-ai/plugin/tui"
-import { DEFAULT_RANGES, parseRange } from "./ranges"
-import type { TimeRange } from "./types"
+import { formatDays, parseRange } from "./ranges.ts"
+import { DEFAULT_RANGES } from "./config.ts"
+import type { TimeRange } from "./types.ts"
 
 /** Open the /dspeak config menu: add, remove, or reset peak windows. */
 export function openConfigMenu(
@@ -34,10 +35,10 @@ export function openAddRange(
       title="Add a peak window (UTC)"
       description={() => (
         <text fg={api.theme.current.textMuted}>
-          Format: HH:MM-HH:MM (all other hours are off-peak)
+          Format: HH:MM-HH:MM [days], e.g. 22:00-02:00 or 06:00-10:00 Mon-Fri
         </text>
       )}
-      placeholder="e.g. 22:00-02:00"
+      placeholder="e.g. 22:00-02:00 Sat,Sun"
       onCancel={() => api.ui.dialog.clear()}
       onConfirm={(value) => {
         const range = parseRange(value)
@@ -47,9 +48,10 @@ export function openAddRange(
         }
         save([...ranges(), range])
         api.ui.dialog.clear()
+        const tag = formatDays(range.days)
         api.ui.toast({
           variant: "success",
-          message: `Added ${range.start}-${range.end}`,
+          message: `Added ${range.start}-${range.end}${tag ? ` ${tag}` : ""}`,
         })
       }}
     />
@@ -67,7 +69,7 @@ export function openRemoveRange(
       title="Remove a peak window"
       placeholder="Pick a window to remove"
       options={ranges().map((r, i) => ({
-        title: `${r.start}-${r.end}`,
+        title: `${r.start}-${r.end}${formatDays(r.days) ? ` ${formatDays(r.days)}` : ""}`,
         value: i,
         onSelect: () => {
           save(ranges().filter((_, j) => j !== i))
@@ -84,7 +86,7 @@ export function openReset(api: TuiPluginApi, save: (next: TimeRange[]) => void) 
   api.ui.dialog.replace(() => (
     <api.ui.DialogConfirm
       title="Reset to defaults"
-      message="Restore DeepSeek default peak windows (01:00-04:00 and 06:00-10:00 UTC)?"
+      message="Restore DeepSeek defaults (weekday peak windows, weekends off-peak)?"
       onConfirm={() => {
         save(DEFAULT_RANGES.slice())
         api.ui.dialog.clear()

@@ -1,0 +1,50 @@
+# Publishes ds-peak-warningx to npm using OIDC trusted publishing (no token).
+
+name: Publish to npm
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write # GitHub issues the OIDC token npm verifies
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24 # ships npm 11+, required for OIDC-based publishing
+          registry-url: https://registry.npmjs.org/
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Typecheck
+        run: npm run typecheck
+
+      - name: Sanity checks
+        run: npm run sanity
+
+      - name: Check whether version changed
+        id: version
+        env:
+          PACKAGE: ds-peak-warningx
+        run: |
+          LOCAL=$(node -p "require('./package.json').version")
+          PUBLISHED=$(npm view "$PACKAGE" version 2>/dev/null || echo "")
+          echo "local=$LOCAL published=${PUBLISHED:-none}"
+          if [ "$LOCAL" = "$PUBLISHED" ]; then
+            echo "changed=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "changed=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Publish
+        if: steps.version.outputs.changed == 'true'
+        run: npm publish --provenance --access public

@@ -1,7 +1,7 @@
 /** @jsxImportSource @opentui/solid */
 import type { TuiThemeCurrent } from "@opencode-ai/plugin/tui"
-import type { TimeRange } from "./types"
-import { usePeakStatus } from "./status"
+import type { TimeRange } from "./types.ts"
+import { usePeakStatus } from "./status.ts"
 
 export interface PeakHomeIndicatorProps {
   theme: TuiThemeCurrent

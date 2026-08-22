@@ -1,5 +1,9 @@
 # ds-peak-warningx
 
+[![npm version](https://img.shields.io/npm/v/ds-peak-warningx.svg)](https://www.npmjs.com/package/ds-peak-warningx)
+[![weekly downloads](https://img.shields.io/npm/dw/ds-peak-warningx.svg)](https://www.npmjs.com/package/ds-peak-warningx)
+[![Publish to npm](https://github.com/Bashar-AlGhada/opencode-ds-peak-warning/actions/workflows/publish.yml/badge.svg)](https://github.com/Bashar-AlGhada/opencode-ds-peak-warning/actions/workflows/publish.yml)
+
 An [opencode](https://opencode.ai) TUI plugin that shows DeepSeek's **peak / off-peak
 pricing windows** in your terminal, so you know when requests are more expensive.
 

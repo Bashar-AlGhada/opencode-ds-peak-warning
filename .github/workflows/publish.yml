@@ -22,13 +22,11 @@ jobs:
           registry-url: https://registry.npmjs.org/
           cache: npm
 
-      # setup-node writes an empty "_authToken=" line into .npmrc, which makes
-      # npm try legacy auth (blank token) instead of the OIDC exchange -> E404.
-      # Strip it and pin a recent npm so trusted publishing always works.
-      - name: Prepare npm for OIDC publishing
+      # setup-node writes an "_authToken=" placeholder into .npmrc (needed as
+      # part of the OIDC flow); pin a recent npm so trusted publishing works.
+      - name: Prepare npm
         run: |
           npm install -g npm@latest
-          sed -i '/_authToken/d' "$NPM_CONFIG_USERCONFIG" || true
           echo "--- .npmrc ---"; cat "$NPM_CONFIG_USERCONFIG"
 
       - name: Install dependencies
@@ -53,6 +51,15 @@ jobs:
           else
             echo "changed=true" >> "$GITHUB_OUTPUT"
           fi
+
+      # Debug aid: print the exact OIDC claims GitHub sends. The npm-side
+      # "Trusted publisher" fields must match these values exactly.
+      - name: Show OIDC identity claims
+        run: |
+          TOKEN=$(curl -sS -H "Authorization: Bearer $ACTIONS_ID_TOKEN_REQUEST_TOKEN" \
+            "$ACTIONS_ID_TOKEN_REQUEST_URL&audience=npm_registry" | jq -r .value)
+          echo "$TOKEN" | cut -d. -f2 | tr '_-' '/+' | base64 -d 2>/dev/null | \
+            jq '{repository, workflow, ref, environment, job_workflow_ref}'
 
       - name: Publish
         if: steps.version.outputs.changed == 'true'

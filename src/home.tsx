@@ -6,11 +6,12 @@ import { usePeakStatus } from "./status.ts"
 export interface PeakHomeIndicatorProps {
   theme: TuiThemeCurrent
   ranges: () => TimeRange[]
+  subscribe?: (cb: () => void) => () => void
 }
 
 /** Minimal landing-screen indicator: just a colored dot + PEAK/OFF-PEAK label. */
 export function PeakHomeIndicator(props: PeakHomeIndicatorProps) {
-  const { status } = usePeakStatus(props.ranges)
+  const { status } = usePeakStatus(props.ranges, { subscribe: props.subscribe })
   const peak = () => status().peak
 
   return (

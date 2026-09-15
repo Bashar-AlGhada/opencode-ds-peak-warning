@@ -278,6 +278,376 @@ check("formatMinutes -1 wraps -> 23:59", formatMinutes(-1), "23:59")
 const now = new Date()
 check("utcMinutes matches getUTC*", utcMinutes(now), now.getUTCHours() * 60 + now.getUTCMinutes())
 
+// --- clock: minute alignment + staleness watchdog (sleep/long-run fix) ---
+import { CLOCK_ALIGN_BUFFER_MS, CLOCK_WATCHDOG_MS } from "../src/config.ts"
+import { isClockStale, msUntilNextTick } from "../src/status.ts"
+check("tick aligns past minute boundary", msUntilNextTick(60_000) > 60_000, true)
+check("tick delay includes buffer", msUntilNextTick(0), 60_000 + CLOCK_ALIGN_BUFFER_MS)
+check("tick mid-minute delay", msUntilNextTick(90_000), 30_000 + CLOCK_ALIGN_BUFFER_MS)
+check("fresh clock not stale", isClockStale(new Date(Date.now() - 10_000)), false)
+check("old clock stale after sleep", isClockStale(new Date(Date.now() - (CLOCK_WATCHDOG_MS + 1_000))), true)
+
+// --- guard: DeepSeek-only peak gate with cooldown debounce ---
+import {
+  formatCooldown,
+  isCooldownActive,
+  matchesProviders,
+  parseConfigModel,
+  sanitizeGuardSettings,
+  shouldGuard,
+} from "../src/guard.ts"
+const guardBase = { enabled: true, mode: "block", cooldownMs: 5 * 60_000, providers: ["deepseek"] }
+const wedPeak = d("2026-08-26T02:30:00Z") // Wed, inside 01:00-04:00 UTC window
+const wedOff = d("2026-08-26T12:00:00Z")
+check("guard fires on peak+deepseek", shouldGuard({ now: wedPeak, ranges: DEFAULT_RANGES, providerID: "deepseek", modelID: "deepseek-chat", settings: guardBase, lastAck: 0 }).guard, true)
+check("guard reason peak", shouldGuard({ now: wedPeak, ranges: DEFAULT_RANGES, providerID: "deepseek", modelID: "deepseek-chat", settings: guardBase, lastAck: 0 }).reason, "peak")
+check("guard quiet off-peak", shouldGuard({ now: wedOff, ranges: DEFAULT_RANGES, providerID: "deepseek", modelID: "deepseek-chat", settings: guardBase, lastAck: 0 }).guard, false)
+check("guard skips non-deepseek", shouldGuard({ now: wedPeak, ranges: DEFAULT_RANGES, providerID: "anthropic", modelID: "claude", settings: guardBase, lastAck: 0 }).reason, "non-target-model")
+check("guard respects cooldown", shouldGuard({ now: wedPeak, ranges: DEFAULT_RANGES, providerID: "deepseek", modelID: "deepseek-chat", settings: guardBase, lastAck: wedPeak.getTime() - 60_000 }).reason, "cooldown")
+check("guard re-fires after cooldown", shouldGuard({ now: wedPeak, ranges: DEFAULT_RANGES, providerID: "deepseek", modelID: "deepseek-chat", settings: guardBase, lastAck: wedPeak.getTime() - 10 * 60_000 }).guard, true)
+check("guard disabled never fires", shouldGuard({ now: wedPeak, ranges: DEFAULT_RANGES, providerID: "deepseek", modelID: "deepseek-chat", settings: { ...guardBase, enabled: false }, lastAck: 0 }).reason, "disabled")
+check("cooldown off always asks", isCooldownActive(wedPeak.getTime() - 1_000, 0, wedPeak.getTime()), false)
+check("matches deepseek model id", matchesProviders("opencode", "deepseek-chat", ["deepseek"]), true)
+check("no match other provider", matchesProviders("anthropic", "claude", ["deepseek"]), false)
+check("empty providers matches all", matchesProviders("anthropic", "claude", []), true)
+check("parse provider/model", parseConfigModel("deepseek/deepseek-chat"), { providerID: "deepseek", modelID: "deepseek-chat" })
+check("parse model with variant", parseConfigModel("deepseek/deepseek-chat@high"), { providerID: "deepseek", modelID: "deepseek-chat" })
+check("sanitize guard defaults", sanitizeGuardSettings(undefined, guardBase), guardBase)
+check("sanitize guard mode", sanitizeGuardSettings({ ...guardBase, mode: "warn" }, guardBase).mode, "warn")
+check("sanitize guard bad mode", sanitizeGuardSettings({ ...guardBase, mode: "nope" }, guardBase).mode, "block")
+check("formatCooldown off", formatCooldown(0), "off")
+check("formatCooldown 5m", formatCooldown(5 * 60_000), "5m")
+check("warn mode never blocks", shouldGuard({ now: wedPeak, ranges: DEFAULT_RANGES, providerID: "deepseek", modelID: "deepseek-chat", settings: { ...guardBase, mode: "warn" }, lastAck: 0 }).guard, false)
+check("warn mode flags warn", shouldGuard({ now: wedPeak, ranges: DEFAULT_RANGES, providerID: "deepseek", modelID: "deepseek-chat", settings: { ...guardBase, mode: "warn" }, lastAck: 0 }).warn, true)
+check("block mode does not flag warn", shouldGuard({ now: wedPeak, ranges: DEFAULT_RANGES, providerID: "deepseek", modelID: "deepseek-chat", settings: guardBase, lastAck: 0 }).warn, false)
+
+// --- guard-intercept: model resolution, labels, client wrapper ---
+import {
+  confirmDialogCallbacks,
+  createConfirmSettlement,
+  formatLastActivity,
+  installPromptGuard,
+  peakSummary,
+  resolvePromptModel,
+} from "../src/guard-intercept.ts"
+
+// First-wins settlement primitive.
+{
+  const s = createConfirmSettlement()
+  s.done(true)
+  s.done(false)
+  check("settlement first wins", await s.promise, true)
+}
+
+// Faithful host simulation: dialog.clear() synchronously fires the onClose
+// handler registered via dialog.replace (this is what made every confirm
+// resolve as cancel before the settle-first fix).
+function mockDialogHost() {
+  const events = []
+  let onClose
+  const inner = createConfirmSettlement()
+  const settle = {
+    done: (v) => { events.push(`done:${v}`); inner.done(v) },
+    promise: inner.promise,
+  }
+  const api = {
+    ui: {
+      dialog: {
+        replace: (_render, onCl) => { onClose = onCl },
+        clear: () => { events.push("clear"); onClose?.() },
+      },
+    },
+  }
+  return { api, settle, events }
+}
+
+{
+  const { api, settle, events } = mockDialogHost()
+  const cb = confirmDialogCallbacks(api, settle)
+  api.ui.dialog.replace(() => ({}), cb.onClose)
+  cb.onConfirm()
+  // The trailing done:false is the onClose backstop firing on clear — it must
+  // lose the first-wins race (proven by the resolve check below).
+  check("confirm settles before clear", events, ["done:true", "clear", "done:false"])
+  check("confirm resolves true", await settle.promise, true)
+}
+
+{
+  const { api, settle, events } = mockDialogHost()
+  const cb = confirmDialogCallbacks(api, settle)
+  api.ui.dialog.replace(() => ({}), cb.onClose)
+  cb.onCancel()
+  check("cancel settles before clear", events, ["done:false", "clear", "done:false"])
+  check("cancel resolves false", await settle.promise, false)
+}
+
+{
+  const { api, settle } = mockDialogHost()
+  const cb = confirmDialogCallbacks(api, settle)
+  api.ui.dialog.replace(() => ({}), cb.onClose)
+  cb.onClose()
+  check("stolen dialog resolves false", await settle.promise, false)
+}
+
+const ALWAYS_PEAK = [{ start: "00:00", end: "00:00" }] // all-day window peaks at any time
+const NEVER_PEAK = []
+
+// resolvePromptModel precedence: call args > top-level spread > session > default
+const fakeDeps = {
+  getSessionModel: () => ({ providerID: "anthropic", modelID: "claude" }),
+  getDefaultModel: () => ({ providerID: "openai", modelID: "gpt" }),
+}
+check("model prefers nested args", resolvePromptModel({ model: { providerID: "deepseek", modelID: "deepseek-chat" }, sessionID: "s" }, fakeDeps), { providerID: "deepseek", modelID: "deepseek-chat" })
+check("model reads top-level spread", resolvePromptModel({ providerID: "deepseek", modelID: "deepseek-chat", sessionID: "s" }, fakeDeps), { providerID: "deepseek", modelID: "deepseek-chat" })
+check("model falls back to session", resolvePromptModel({ sessionID: "s" }, fakeDeps), { providerID: "anthropic", modelID: "claude" })
+check("model falls back to default", resolvePromptModel({ sessionID: "s" }, { getSessionModel: () => ({}), getDefaultModel: () => ({ providerID: "deepseek", modelID: "deepseek-chat" }) }), { providerID: "deepseek", modelID: "deepseek-chat" })
+check("model unknown when all empty", resolvePromptModel({ sessionID: "s" }, { getSessionModel: () => { throw new Error("kv down") }, getDefaultModel: () => { throw new Error("cfg down") } }), { providerID: undefined, modelID: undefined })
+
+// formatLastActivity labels (sidebar indication)
+check("activity null -> null", formatLastActivity(null), null)
+check("activity sent", formatLastActivity({ at: wedPeak.getTime(), outcome: "sent", reason: "peak-ack" })?.startsWith("last sent"), true)
+check("activity cancelled", formatLastActivity({ at: wedPeak.getTime(), outcome: "cancelled", reason: "peak" })?.startsWith("last cancelled"), true)
+check("activity warned", formatLastActivity({ at: wedPeak.getTime(), outcome: "warned", reason: "peak" })?.startsWith("last warned"), true)
+check("activity blocked", formatLastActivity({ at: wedPeak.getTime(), outcome: "blocked", reason: "confirm-pending" })?.startsWith("last blocked"), true)
+check("activity pass off-peak", formatLastActivity({ at: wedPeak.getTime(), outcome: "pass", reason: "off-peak" }), "off-peak")
+check("activity pass non-target", formatLastActivity({ at: wedPeak.getTime(), outcome: "pass", reason: "non-target-model" }), "non-DeepSeek")
+check("activity pass cooldown", formatLastActivity({ at: wedPeak.getTime(), outcome: "pass", reason: "cooldown" })?.startsWith("cooldown until"), true)
+check("summary peaks", peakSummary(ALWAYS_PEAK, wedPeak).includes("PEAK"), true)
+check("summary off-peak", peakSummary(NEVER_PEAK, wedOff).includes("off-peak"), true)
+
+// Mock TUI api for the client wrapper. Slash/shell paths are structurally
+// untouched: only session.prompt/promptAsync are wrapped.
+function mockApi({ sessionModel, defaultModel } = {}) {
+  const calls = { toast: [], notify: [], ack: [], dialog: 0 }
+  const sent = []
+  const origPrompt = async (...a) => {
+    sent.push(a)
+    return { ok: true }
+  }
+  const origAsync = async (...a) => {
+    sent.push(a)
+    return { ok: true, async: true }
+  }
+  const origCommand = async () => ({ ok: true })
+  const session = { prompt: origPrompt, promptAsync: origAsync, command: origCommand, shell: origCommand }
+  let disposeFn
+  const api = {
+    client: { session },
+    state: { session: { get: () => sessionModel }, config: { model: defaultModel } },
+    ui: {
+      toast: (t) => calls.toast.push(t),
+      dialog: { replace: () => { calls.dialog++ }, clear: () => {} },
+    },
+    kv: { get: () => undefined, set: () => {} },
+    lifecycle: { onDispose: (fn) => { disposeFn = fn; return () => {} } },
+    event: { on: () => () => {} },
+  }
+  return { api, session, calls, sent, origPrompt, origAsync, origCommand, dispose: () => disposeFn?.() }
+}
+
+function guardDeps(ctx, { confirmImpl } = {}) {
+  let confirmCalls = 0
+  const tracker = { get confirmCalls() { return confirmCalls } }
+  return {
+    deps: {
+      ranges: () => ctx.ranges,
+      settings: () => ctx.settings,
+      lastAck: () => ctx.lastAck,
+      ack: (at) => { ctx.lastAck = at ?? Date.now(); ctx.calls.ack.push(ctx.lastAck) },
+      showConfirm: async (s) => { confirmCalls++; return confirmImpl ? confirmImpl(s) : true },
+      notify: (a) => ctx.calls.notify.push(a),
+      toast: (message, variant) => ctx.calls.toast.push({ message, variant }),
+      getSessionModel: (id) => {
+        const m = ctx.api.state.session.get(id)?.model
+        return m ? { providerID: m.providerID, modelID: m.id } : {}
+      },
+      getDefaultModel: () => parseConfigModel(ctx.api.state.config.model),
+    },
+    tracker,
+  }
+}
+
+const DS_ARGS = { sessionID: "s", model: { providerID: "deepseek", modelID: "deepseek-chat" }, parts: [] }
+
+// Disabled guard passes through without any dialog.
+{
+  const ctx = { ...mockApi(), ranges: ALWAYS_PEAK, settings: { ...guardBase, enabled: false }, lastAck: 0 }
+  const { deps, tracker } = guardDeps(ctx)
+  const handle = installPromptGuard(ctx.api, deps)
+  check("disabled installs", handle.installed, true)
+  const res = await ctx.session.prompt(DS_ARGS)
+  check("disabled sends", res.ok, true)
+  check("disabled asks nothing", tracker.confirmCalls, 0)
+  check("disabled notifies pass", ctx.calls.notify.at(-1)?.reason, "disabled")
+  handle.uninstall()
+}
+
+// Off-peak passes through.
+{
+  const ctx = { ...mockApi(), ranges: NEVER_PEAK, settings: { ...guardBase }, lastAck: 0 }
+  const { deps, tracker } = guardDeps(ctx)
+  const handle = installPromptGuard(ctx.api, deps)
+  await ctx.session.prompt(DS_ARGS)
+  check("off-peak sends", ctx.sent.length, 1)
+  check("off-peak asks nothing", tracker.confirmCalls, 0)
+  handle.uninstall()
+}
+
+// Non-DeepSeek passes through with a recorded reason (visible in the panel).
+{
+  const ctx = { ...mockApi(), ranges: ALWAYS_PEAK, settings: { ...guardBase }, lastAck: 0 }
+  const { deps } = guardDeps(ctx)
+  const handle = installPromptGuard(ctx.api, deps)
+  await ctx.session.prompt({ sessionID: "s", model: { providerID: "anthropic", modelID: "claude" } })
+  check("non-target sends", ctx.sent.length, 1)
+  check("non-target reason recorded", ctx.calls.notify.at(-1)?.reason, "non-target-model")
+  handle.uninstall()
+}
+
+// Block + confirm: original is NOT called until the user confirms.
+{
+  const ctx = { ...mockApi(), ranges: ALWAYS_PEAK, settings: { ...guardBase }, lastAck: 0 }
+  const { deps, tracker } = guardDeps(ctx)
+  const handle = installPromptGuard(ctx.api, deps)
+  const pending = ctx.session.prompt(DS_ARGS)
+  check("gated waits for confirm", ctx.sent.length, 0)
+  check("gated asks once", tracker.confirmCalls, 1)
+  await pending
+  check("confirmed sends once", ctx.sent.length, 1)
+  check("confirm starts cooldown", ctx.calls.ack.length, 1)
+  await ctx.session.prompt(DS_ARGS)
+  check("cooldown skips second dialog", tracker.confirmCalls, 1)
+  check("cooldown sends", ctx.sent.length, 2)
+  handle.uninstall()
+}
+
+// Cancel rejects and never sends.
+{
+  const ctx = { ...mockApi(), ranges: ALWAYS_PEAK, settings: { ...guardBase }, lastAck: 0 }
+  const { deps } = guardDeps(ctx, { confirmImpl: () => false })
+  const handle = installPromptGuard(ctx.api, deps)
+  const err = await ctx.session.prompt(DS_ARGS).then(() => null, (e) => e)
+  check("cancel rejects", /peak/i.test(err?.message ?? ""), true)
+  check("cancel never sends", ctx.sent.length, 0)
+  check("cancel recorded", ctx.calls.notify.at(-1)?.outcome, "cancelled")
+  handle.uninstall()
+}
+
+// Dialog plumbing failure fails OPEN (never strands the user).
+{
+  const ctx = { ...mockApi(), ranges: ALWAYS_PEAK, settings: { ...guardBase }, lastAck: 0 }
+  const { deps } = guardDeps(ctx, { confirmImpl: () => { throw new Error("dialog down") } })
+  const handle = installPromptGuard(ctx.api, deps)
+  const res = await ctx.session.prompt(DS_ARGS)
+  check("dialog failure fails open", res.ok, true)
+  handle.uninstall()
+}
+
+// Concurrent gated sends: second rejects immediately, single dialog.
+{
+  const ctx = { ...mockApi(), ranges: ALWAYS_PEAK, settings: { ...guardBase }, lastAck: 0 }
+  let release
+  const gate = new Promise((r) => { release = r })
+  const { deps, tracker } = guardDeps(ctx, { confirmImpl: () => gate })
+  const handle = installPromptGuard(ctx.api, deps)
+  const first = ctx.session.prompt(DS_ARGS)
+  const secondErr = await ctx.session.prompt(DS_ARGS).then(() => null, (e) => e)
+  check("concurrent rejects while pending", /pending/i.test(secondErr?.message ?? ""), true)
+  check("concurrent single dialog", tracker.confirmCalls, 1)
+  release(true)
+  await first
+  check("first sends after confirm", ctx.sent.length, 1)
+  handle.uninstall()
+}
+
+// Warn mode never blocks, toasts once per cooldown window.
+{
+  const ctx = { ...mockApi(), ranges: ALWAYS_PEAK, settings: { ...guardBase, mode: "warn" }, lastAck: 0 }
+  const { deps, tracker } = guardDeps(ctx)
+  const handle = installPromptGuard(ctx.api, deps)
+  await ctx.session.prompt(DS_ARGS)
+  await ctx.session.prompt(DS_ARGS)
+  check("warn sends", ctx.sent.length, 2)
+  check("warn asks nothing", tracker.confirmCalls, 0)
+  check("warn toasts once", ctx.calls.toast.filter((t) => /peak/i.test(t.message)).length, 1)
+  handle.uninstall()
+}
+
+// Warn mode with cooldown off toasts on every send.
+{
+  const ctx = { ...mockApi(), ranges: ALWAYS_PEAK, settings: { ...guardBase, mode: "warn", cooldownMs: 0 }, lastAck: 0 }
+  const { deps } = guardDeps(ctx)
+  const handle = installPromptGuard(ctx.api, deps)
+  await ctx.session.prompt(DS_ARGS)
+  await ctx.session.prompt(DS_ARGS)
+  check("warn cooldown 0 toasts every time", ctx.calls.toast.filter((t) => /peak/i.test(t.message)).length, 2)
+  handle.uninstall()
+}
+
+// Unknown model fails open (no silent block, no dialog).
+{
+  const ctx = mockApi({ sessionModel: undefined, defaultModel: undefined })
+  Object.assign(ctx, { ranges: ALWAYS_PEAK, settings: { ...guardBase }, lastAck: 0 })
+  const { deps, tracker } = guardDeps(ctx)
+  const handle = installPromptGuard(ctx.api, deps)
+  await ctx.session.prompt({ sessionID: "s", parts: [] })
+  check("unknown model sends", ctx.sent.length, 1)
+  check("unknown model asks nothing", tracker.confirmCalls, 0)
+  handle.uninstall()
+}
+
+// Cooldown 0 asks on every prompt (but slash/settings still work: they never
+// reach session.prompt at all).
+{
+  const ctx = { ...mockApi(), ranges: ALWAYS_PEAK, settings: { ...guardBase, cooldownMs: 0 }, lastAck: 0 }
+  const { deps, tracker } = guardDeps(ctx)
+  const handle = installPromptGuard(ctx.api, deps)
+  await ctx.session.prompt(DS_ARGS)
+  await ctx.session.prompt(DS_ARGS)
+  check("cooldown 0 asks every time", tracker.confirmCalls, 2)
+  check("command method untouched", ctx.session.command === ctx.origCommand, true)
+  await ctx.session.command({ sessionID: "s", command: "sessions" })
+  check("slash path unaffected", tracker.confirmCalls, 2)
+  handle.uninstall()
+}
+
+// Uninstall and dispose restore the original methods.
+{
+  const ctx = { ...mockApi(), ranges: ALWAYS_PEAK, settings: { ...guardBase }, lastAck: 0 }
+  const { deps, tracker } = guardDeps(ctx)
+  const handle = installPromptGuard(ctx.api, deps)
+  check("wrapped after install", ctx.session.prompt !== ctx.origPrompt, true)
+  handle.uninstall()
+  check("uninstall restores prompt", ctx.session.prompt === ctx.origPrompt, true)
+  await ctx.session.prompt(DS_ARGS)
+  check("post-uninstall sends freely", ctx.sent.length, 1)
+  check("post-uninstall asks nothing", tracker.confirmCalls, 0)
+}
+
+// Dispose hook restores too.
+{
+  const ctx = { ...mockApi(), ranges: ALWAYS_PEAK, settings: { ...guardBase }, lastAck: 0 }
+  const { deps } = guardDeps(ctx)
+  installPromptGuard(ctx.api, deps)
+  ctx.dispose()
+  check("dispose restores prompt", ctx.session.prompt === ctx.origPrompt, true)
+}
+
+// Client rotation re-patches the new object.
+{
+  const ctx = { ...mockApi(), ranges: ALWAYS_PEAK, settings: { ...guardBase }, lastAck: 0 }
+  const { deps, tracker } = guardDeps(ctx)
+  const handle = installPromptGuard(ctx.api, deps)
+  const replacement = async () => ({ ok: "new" })
+  ctx.api.client = { session: { prompt: replacement, command: async () => ({}) } }
+  handle.ensurePatched()
+  check("rotation re-patches", ctx.api.client.session.prompt !== replacement, true)
+  const pending = ctx.api.client.session.prompt(DS_ARGS)
+  check("rotated client still guards", tracker.confirmCalls, 1)
+  await pending
+  handle.uninstall()
+}
+
 // --- every relative import in src/ must resolve to an existing file ---
 // Guards against broken specifiers (e.g. ".ts" pointing at a ".tsx" file),
 // which fail silently at plugin load time in opencode.

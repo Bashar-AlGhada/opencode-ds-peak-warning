@@ -22,6 +22,8 @@ weekday-based pricing rule can be configured.
   pattern.
 - In-app editing with `/dspeak` — no config file editing. Your windows persist
   across restarts.
+- An optional peak guard that asks for confirmation before DeepSeek prompts
+  go out during peak hours (see `Peak guard` below).
 
 ## Quick install (from this repo, global)
 
@@ -88,6 +90,24 @@ Check this page or `npm view ds-peak-warningx version` for the latest release.
   `22:00-02:00`, `06:00-10:00 Mon-Fri`, `14:00-16:00 Sat,Sun`, `20:00-21:00 Wed`.
   Days refer to the Beijing calendar day (wrapping midnight is fine).
 
+## Peak guard
+
+An opt-in confirmation step before prompts that would go out on a DeepSeek
+model during peak hours (off by default).
+
+- Turn it on via `/dspeak` → `Peak guard` → `Enable guard`. The sidebar panel
+  then shows a `Guard:` line with the current state and the last outcome
+  (e.g. `Guard: block 5m · last sent 02:31`).
+- In `block` mode, sending a DeepSeek prompt during peak opens a confirmation
+  dialog: confirm to send, cancel to drop it. In `warn` mode, prompts send
+  normally and you just get a warning toast.
+- One confirmation silences the guard for the cooldown (default 5 minutes;
+  `0` means ask on every prompt). Change it under `Peak guard` → `Cooldown`.
+- Run `/dspeak-confirm` any time to confirm up front and start the cooldown
+  without waiting for a prompt.
+- Slash commands (`/sessions`, `/models`, …), shell mode, and typing are never
+  blocked — only the DeepSeek request itself asks for confirmation.
+
 ## Options
 
 You can set the windows at install time with the `[spec, options]` tuple in `tui.json`:
@@ -106,6 +126,11 @@ You can set the windows at install time with the `[spec, options]` tuple in `tui
   it to those weekdays; omit `days` for an every-day window. Later in-app
   edits via `/dspeak` win and persist.
 - `order` — sidebar slot order (default `150`).
+- `guard` — opt-in prompt guard: `{ "enabled": true, "mode": "block",
+  "cooldownMs": 300000, "providers": ["deepseek"] }`. `mode` is `"block"`
+  (ask for confirmation before sending) or `"warn"` (send normally, show a
+  warning toast); `cooldownMs: 0` asks on every prompt. In-app `/dspeak`
+  guard edits win and persist.
 
 ## Development
 

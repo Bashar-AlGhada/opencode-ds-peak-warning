@@ -32,11 +32,30 @@ export const DEFAULT_RANGES: TimeRange[] = [
 /** KV key where /dspeak-edited windows are persisted. */
 export const KV_RANGES_KEY = "ds-peak:ranges"
 
+/** KV key where guard settings are persisted. */
+export const KV_GUARD_KEY = "ds-peak:guard"
+
+/** KV key where the last guard acknowledgement timestamp (ms) is stored. */
+export const KV_GUARD_ACK_KEY = "ds-peak:guard:ack"
+
 /** Default sidebar slot order (slots render lowest-first). */
 export const DEFAULT_SLOT_ORDER = 150
 
 /** How often the clock signal ticks and status views re-render. */
 export const TICK_MS = 30_000
+
+/** Buffer added after each minute boundary so transitions have settled. */
+export const CLOCK_ALIGN_BUFFER_MS = 1_000
+
+/**
+ * If the ticking clock is older than this, views treat it as stale (sleep,
+ * throttled timers) and force a refresh on next read/event.
+ */
+export const CLOCK_WATCHDOG_MS = 60_000
+
+/** Default peak-guard settings (guard is opt-in and off by default). */
+export const DEFAULT_GUARD_PROVIDERS: string[] = ["deepseek"]
+export const DEFAULT_GUARD_COOLDOWN_MS = 5 * 60_000
 
 /** How many days ahead the transition scanner looks (covers any weekly gap). */
 export const TRANSITION_SCAN_DAYS = 8

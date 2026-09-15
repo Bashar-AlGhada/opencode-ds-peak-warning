@@ -8,23 +8,30 @@ import { usePeakStatus } from "./status.ts"
 export interface PeakPanelProps {
   theme: TuiThemeCurrent
   ranges: () => TimeRange[]
+  subscribe?: (cb: () => void) => () => void
+  /** Guard status line, or null when the guard section should be hidden. */
+  guardLine?: () => string | null
 }
 
 const MS_MIN = 60_000
 
 /** Sidebar panel sized for a narrow column: short lines, no overflowing rows. */
 export function PeakPanel(props: PeakPanelProps) {
-  const { now, time, status, transition, local, tz } = usePeakStatus(props.ranges)
+  const { now, time, status, transition, local, tz } = usePeakStatus(props.ranges, {
+    subscribe: props.subscribe,
+  })
   const peak = () => status().peak
 
   // City-only timezone label ("Asia/Damascus" -> "Damascus").
   const city = tz.includes("/") ? tz.split("/").pop()!.replace(/_/g, " ") : tz
 
   // "01:00" today, or "Mon 01:00" when the flip lands on another day.
+  // Compare against the ticking clock (not a fresh Date) so the label stays
+  // consistent with the displayed status even if a tick was missed.
   const atLabel = () => {
     const at = transition().at
     const clock = formatMinutes(utcMinutes(at))
-    return at.toISOString().slice(0, 10) === new Date().toISOString().slice(0, 10)
+    return at.toISOString().slice(0, 10) === now().toISOString().slice(0, 10)
       ? clock
       : `${DAY_LABELS[at.getUTCDay()]} ${clock}`
   }
@@ -62,6 +69,11 @@ export function PeakPanel(props: PeakPanelProps) {
         )
       })}
       <text fg={props.theme.textMuted}>otherwise off-peak</text>
+      {/* Guard state + last outcome, so a silent fail-open is visible */}
+      {(() => {
+        const line = props.guardLine?.()
+        return line ? <text fg={props.theme.textMuted}>{line}</text> : null
+      })()}
       <text fg={props.theme.textMuted}>edit: /dspeak</text>
     </box>
   )

@@ -32,6 +32,9 @@ export const DEFAULT_RANGES: TimeRange[] = [
 /** KV key where /dspeak-edited windows are persisted. */
 export const KV_RANGES_KEY = "ds-peak:ranges"
 
+/** KV key holding the coverage document (source ranges + derived runs). */
+export const KV_RUNS_KEY = "ds-peak:coverage"
+
 /** KV key where guard settings are persisted. */
 export const KV_GUARD_KEY = "ds-peak:guard"
 
@@ -52,6 +55,13 @@ export const CLOCK_ALIGN_BUFFER_MS = 1_000
  * throttled timers) and force a refresh on next read/event.
  */
 export const CLOCK_WATCHDOG_MS = 60_000
+
+/**
+ * Minimum gap between event-driven clock refreshes. poke() calls inside this
+ * window only bump reception counters — no signal writes — so even firehose
+ * event tiers cost ~nanoseconds each.
+ */
+export const CLOCK_EVENT_GATE_MS = 30_000
 
 /** Default peak-guard settings (guard is opt-in and off by default). */
 export const DEFAULT_GUARD_PROVIDERS: string[] = ["deepseek"]

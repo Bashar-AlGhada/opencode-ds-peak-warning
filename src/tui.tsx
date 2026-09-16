@@ -1,7 +1,19 @@
 /** @jsxImportSource @opentui/solid */
 import { createSignal } from "solid-js"
 import type { TuiPlugin, TuiPluginApi, TuiPluginModule } from "@opencode-ai/plugin/tui"
-import { migrateLegacyRanges, sanitizeRanges } from "./ranges.ts"
+import {
+  coerceCoverageDoc,
+  makeCoverageDoc,
+  migrateLegacyRanges,
+  sanitizeRanges,
+} from "./ranges.ts"
+import type { CoverageDoc } from "./ranges.ts"
+import {
+  CLOCK_EVENT_TYPES,
+  clockDiagnostics,
+  ensureClockRunning,
+  poke,
+} from "./clock.ts"
 import {
   DEFAULT_GUARD_COOLDOWN_MS,
   DEFAULT_GUARD_PROVIDERS,
@@ -10,6 +22,7 @@ import {
   KV_GUARD_ACK_KEY,
   KV_GUARD_KEY,
   KV_RANGES_KEY,
+  KV_RUNS_KEY,
   WEEKDAY_DEFAULT_DAYS,
 } from "./config.ts"
 import type { DsPeakOptions, GuardSettings, TimeRange } from "./types.ts"
@@ -27,7 +40,7 @@ import { PeakHomeIndicator } from "./home.tsx"
  * pattern. Precedence: saved KV value > plugin `ranges` option > built-in
  * weekday defaults.
  */
-function loadRanges(api: TuiPluginApi, opts: Partial<DsPeakOptions>): TimeRange[] {
+function resolveEffectiveRanges(api: TuiPluginApi, opts: Partial<DsPeakOptions>): TimeRange[] {
   try {
     // Prefer what the user last saved through /dspeak (day patterns included).
     const fromKv = api.kv.get<unknown>(KV_RANGES_KEY)
@@ -44,6 +57,36 @@ function loadRanges(api: TuiPluginApi, opts: Partial<DsPeakOptions>): TimeRange[
     if (cleaned.length) return migrateLegacyRanges(cleaned, WEEKDAY_DEFAULT_DAYS)
   }
   return DEFAULT_RANGES.map((r) => ({ ...r, days: r.days ? [...r.days] : undefined }))
+}
+
+/**
+ * Load the coverage document: a valid persisted doc is trusted (fingerprint
+ * verified inside coerceCoverageDoc); anything else rebuilds the merged array
+ * from the effective ranges. The caller saves forward when rebuilt.
+ */
+function loadCoverage(api: TuiPluginApi, opts: Partial<DsPeakOptions>): { doc: CoverageDoc; rebuilt: boolean } {
+  try {
+    const fromKv = api.kv.get<unknown>(KV_RUNS_KEY)
+    const doc = coerceCoverageDoc(fromKv)
+    if (doc) return { doc, rebuilt: false }
+  } catch {
+    // ignore kv read errors, rebuild below
+  }
+  return { doc: makeCoverageDoc(resolveEffectiveRanges(api, opts)), rebuilt: true }
+}
+
+/** Persist both the coverage doc and the legacy plain-array key (rollback safety). */
+function persistCoverage(api: TuiPluginApi, doc: CoverageDoc): void {
+  try {
+    api.kv.set(KV_RUNS_KEY, doc)
+  } catch {
+    // kv may be unavailable; keep in-memory state
+  }
+  try {
+    api.kv.set(KV_RANGES_KEY, doc.ranges)
+  } catch {
+    // kv may be unavailable; keep in-memory state
+  }
 }
 
 function defaultGuard(): GuardSettings {
@@ -74,20 +117,28 @@ function loadLastAck(api: TuiPluginApi): number {
 
 const tui: TuiPlugin = async (api, options) => {
   const opts = (options ?? {}) as Partial<DsPeakOptions>
-  const [ranges, setRanges] = createSignal<TimeRange[]>(loadRanges(api, opts))
+  ensureClockRunning()
+  const initial = loadCoverage(api, opts)
+  if (initial.rebuilt) persistCoverage(api, initial.doc)
+  // Single choke point for window state: every settings change flows through
+  // `save`, which always rebuilds the merged coverage array with it — the
+  // array cannot go stale relative to the settings.
+  const [coverage, setCoverage] = createSignal<CoverageDoc>(initial.doc)
+  const ranges = () => coverage().ranges
+  const runs = () => coverage().runs
   const [guardSettings, setGuardSettings] = createSignal<GuardSettings>(loadGuard(api, opts))
   const [lastAck, setLastAck] = createSignal<number>(loadLastAck(api))
   const [activity, setActivity] = createSignal<GuardActivity | null>(null)
   const [guardInstalled, setGuardInstalled] = createSignal(false)
 
   // Update in-memory state and persist to KV so edits survive restarts.
+  // Re-sanitizes defensively so even a hypothetical direct caller cannot
+  // store ranges without a matching freshly-built array.
   const save = (next: TimeRange[]) => {
-    setRanges(next)
-    try {
-      api.kv.set(KV_RANGES_KEY, next)
-    } catch {
-      // kv may be unavailable; keep in-memory state
-    }
+    // An explicitly emptied list means "no peak windows" (not "defaults").
+    const doc = makeCoverageDoc(migrateLegacyRanges(sanitizeRanges(next), WEEKDAY_DEFAULT_DAYS))
+    setCoverage(doc)
+    persistCoverage(api, doc)
   }
 
   const saveGuard = (next: GuardSettings) => {
@@ -145,6 +196,7 @@ const tui: TuiPlugin = async (api, options) => {
   // command itself.
   const guard = installPromptGuard(api, {
     ranges,
+    runs,
     settings: guardSettings,
     lastAck,
     ack,
@@ -167,48 +219,63 @@ const tui: TuiPlugin = async (api, options) => {
     return last ? `${base} · ${last}` : base
   }
 
-  // Activity refresh for the ticking clocks and the client patch: user and
-  // session events force an immediate clock read (wake-from-sleep heals on
-  // first interaction) and re-apply the patch if the client rotated.
-  const subscribeToActivity = (cb: () => void) => {
-    const unsubs: Array<() => void> = []
-    const types = [
-      "session.updated",
-      "session.idle",
-      "session.status",
-      "session.created",
-      "tui.prompt.append",
-      "tui.command.execute",
-    ]
-    for (const t of types) {
+  // Watchdog fan-in, subscribed EXACTLY ONCE per process (not per view): every
+  // bus event pokes the shared clock (rate-limited internally, so firehose
+  // tiers are safe) and session updates additionally re-apply the guard patch
+  // if the client rotated. Views react to the clock signal automatically, so
+  // they need no subscriptions of their own. Wake-from-sleep heals on first
+  // interaction instead of waiting for a timer.
+  try {
+    for (const t of CLOCK_EVENT_TYPES) {
       try {
-        unsubs.push(api.event.on(t as never, () => cb()))
+        api.event.on(t as never, () => poke(t))
       } catch {
-        // unknown event type on this host; skip
+        // unknown event type on this host; skip (counters reveal silent types)
       }
     }
-    try {
-      unsubs.push(
-        api.event.on("session.updated" as never, () => {
-          try {
-            guard.ensurePatched()
-          } catch {
-            // ignore re-patch errors
-          }
-        }),
-      )
-    } catch {
-      // unknown event type on this host; skip
-    }
-    return () => {
-      for (const u of unsubs) {
-        try {
-          u()
-        } catch {
-          // ignore cleanup errors
-        }
+  } catch {
+    // event bus unavailable; timers + render-time checks still work
+  }
+  try {
+    api.event.on("session.updated" as never, () => {
+      try {
+        guard.ensurePatched()
+      } catch {
+        // ignore re-patch errors
       }
+    })
+  } catch {
+    // unknown event type on this host; skip
+  }
+
+  // Heartbeat snapshot for the /dspeak diagnostics row: clock age, tick and
+  // refresh counters, coverage size, and per-type reception counts (including
+  // silent types, so a never-firing subscription is visible, not trusted).
+  const diagnosticLines = (): string[] => {
+    const d = clockDiagnostics()
+    const ageS = Math.max(0, Math.round((Date.now() - d.lastTickAt) / 1000))
+    const lines = [
+      `Clock: ${ageS === 0 ? "fresh" : `${ageS}s old`} · ${d.tickCount} ticks · ${d.refreshCount} refreshes`,
+      `Coverage: ${coverage().runs.length} runs from ${coverage().ranges.length} windows`,
+    ]
+    // Heard counts cover every key ever poked (including ad-hoc sources like
+    // "stale-heal"), not just the subscribed tiers.
+    const heard = Object.keys(d.eventCounts)
+      .filter((t) => d.eventCounts[t] > 0)
+      .sort()
+    lines.push(heard.length ? `Events: ${heard.map((t) => `${t} ${d.eventCounts[t]}`).join(" · ")}` : "Events: none yet")
+    const silent = CLOCK_EVENT_TYPES.filter((t) => !(d.eventCounts[t] > 0))
+    if (silent.length) {
+      // Grouped by area so ~90 silent types stay one readable line.
+      const groups = new Map<string, number>()
+      for (const t of silent) {
+        const parts = t.split(".")
+        const key = parts[0] === "session" && parts[1] === "next" ? "session.next" : parts[0]
+        groups.set(key, (groups.get(key) ?? 0) + 1)
+      }
+      lines.push(`Silent (${silent.length}): ${[...groups].map(([k, n]) => `${k}×${n}`).join(", ")}`)
     }
+    return lines
   }
 
   const order = typeof opts.order === "number" ? opts.order : DEFAULT_SLOT_ORDER
@@ -222,11 +289,11 @@ const tui: TuiPlugin = async (api, options) => {
       slots: {
         // Render the pricing panel in the session sidebar.
         sidebar_content(ctx) {
-          return <PeakPanel theme={ctx.theme.current} ranges={ranges} subscribe={subscribeToActivity} guardLine={guardLine} />
+          return <PeakPanel theme={ctx.theme.current} ranges={ranges} runs={runs} guardLine={guardLine} />
         },
         // Render the minimal PEAK/OFF-PEAK dot on the landing screen.
         home_prompt_right(ctx) {
-          return <PeakHomeIndicator theme={ctx.theme.current} ranges={ranges} subscribe={subscribeToActivity} />
+          return <PeakHomeIndicator theme={ctx.theme.current} ranges={ranges} runs={runs} />
         },
       },
     })
@@ -239,7 +306,8 @@ const tui: TuiPlugin = async (api, options) => {
   }
 
   // Back the /dspeak command with the config menu dialogs.
-  const configure = () => openConfigMenu(api, ranges, save, { settings: guardSettings, saveSettings: saveGuard, ack })
+  const configure = () =>
+    openConfigMenu(api, ranges, save, { settings: guardSettings, saveSettings: saveGuard, ack }, diagnosticLines)
   // Pre-confirm from anywhere (palette or slash): starts the cooldown without
   // needing a pending prompt.
   const confirmPeak = () => {

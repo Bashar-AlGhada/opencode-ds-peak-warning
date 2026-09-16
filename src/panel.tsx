@@ -1,6 +1,7 @@
 /** @jsxImportSource @opentui/solid */
 import type { TuiThemeCurrent } from "@opencode-ai/plugin/tui"
 import { formatDays, formatDuration, formatMinutes, utcMinutes } from "./ranges.ts"
+import type { PeakRun } from "./ranges.ts"
 import { DAY_LABELS } from "./config.ts"
 import type { TimeRange } from "./types.ts"
 import { usePeakStatus } from "./status.ts"
@@ -8,7 +9,8 @@ import { usePeakStatus } from "./status.ts"
 export interface PeakPanelProps {
   theme: TuiThemeCurrent
   ranges: () => TimeRange[]
-  subscribe?: (cb: () => void) => () => void
+  /** Prebuilt coverage array; hot status reads use it when provided. */
+  runs?: () => PeakRun[]
   /** Guard status line, or null when the guard section should be hidden. */
   guardLine?: () => string | null
 }
@@ -17,9 +19,7 @@ const MS_MIN = 60_000
 
 /** Sidebar panel sized for a narrow column: short lines, no overflowing rows. */
 export function PeakPanel(props: PeakPanelProps) {
-  const { now, time, status, transition, local, tz } = usePeakStatus(props.ranges, {
-    subscribe: props.subscribe,
-  })
+  const { now, time, status, transition, local, tz } = usePeakStatus(props.ranges, props.runs)
   const peak = () => status().peak
 
   // City-only timezone label ("Asia/Damascus" -> "Damascus").

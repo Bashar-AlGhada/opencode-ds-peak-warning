@@ -1,6 +1,7 @@
 import type { TuiPluginApi } from "@opencode-ai/plugin/tui"
-import { formatDuration, formatMinutes, utcMinutes } from "./ranges.ts"
-import { nextTransition, statusForDate } from "./ranges.ts"
+import { buildCoverageRuns, formatDuration, formatMinutes, utcMinutes } from "./ranges.ts"
+import { nextTransition, nextTransitionInRuns, statusForDate, statusForRuns } from "./ranges.ts"
+import type { PeakRun } from "./ranges.ts"
 import { shouldGuard } from "./guard.ts"
 import type { GuardSettings, TimeRange } from "./types.ts"
 
@@ -32,6 +33,8 @@ export interface GuardActivity {
 
 export interface PromptGuardDeps {
   ranges: () => TimeRange[]
+  /** Prebuilt coverage array; the confirm summary uses it when provided. */
+  runs?: () => PeakRun[]
   settings: () => GuardSettings
   lastAck: () => number
   ack: (at?: number) => void
@@ -140,6 +143,26 @@ export function peakSummary(ranges: TimeRange[], now: Date): string {
     // with no flip in range (e.g. all-day windows) the scanner falls back to
     // `to: current`, which would invert the label.
     if (!statusForDate(now, ranges).peak) {
+      return `now ${clock} UTC is off-peak, next peak ${nextClock} UTC`
+    }
+    if (tr.to) return `now ${clock} UTC is PEAK (no further flip in range)`
+    return `now ${clock} UTC is PEAK, off-peak ${nextClock} UTC in ${wait}`
+  } catch {
+    return "peak pricing is active"
+  }
+}
+
+/** Human summary for the confirm dialog from the coverage array (reference: peakSummary). */
+export function peakSummaryFromRuns(runs: PeakRun[], now: Date): string {
+  try {
+    const tr = nextTransitionInRuns(runs, now)
+    const clock = formatMinutes(utcMinutes(now))
+    const nextClock = formatMinutes(utcMinutes(tr.at))
+    const wait = formatDuration(Math.max(0, Math.round((tr.at.getTime() - now.getTime()) / 60_000)))
+    // Current state comes from the real status, not the transition direction:
+    // with no flip in range (e.g. all-day windows) the reader falls back to
+    // `to: current`, which would invert the label.
+    if (!statusForRuns(runs, now)) {
       return `now ${clock} UTC is off-peak, next peak ${nextClock} UTC`
     }
     if (tr.to) return `now ${clock} UTC is PEAK (no further flip in range)`
@@ -311,7 +334,10 @@ export function installPromptGuard(api: TuiPluginApi, deps: PromptGuardDeps): Pr
       confirmPending = true
       let confirmed: boolean
       try {
-        confirmed = await deps.showConfirm(peakSummary(deps.ranges(), new Date()))
+        // Prefer the prebuilt coverage array; fall back to a local build so a
+        // missing accessor can never break the dialog (once per prompt).
+        const coverage = deps.runs?.() ?? buildCoverageRuns(deps.ranges())
+        confirmed = await deps.showConfirm(peakSummaryFromRuns(coverage, new Date()))
       } catch {
         // Dialog unavailable: fail open rather than strand the user.
         confirmed = true

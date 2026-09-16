@@ -1,17 +1,19 @@
 /** @jsxImportSource @opentui/solid */
 import type { TuiThemeCurrent } from "@opencode-ai/plugin/tui"
 import type { TimeRange } from "./types.ts"
+import type { PeakRun } from "./ranges.ts"
 import { usePeakStatus } from "./status.ts"
 
 export interface PeakHomeIndicatorProps {
   theme: TuiThemeCurrent
   ranges: () => TimeRange[]
-  subscribe?: (cb: () => void) => () => void
+  /** Prebuilt coverage array; hot status reads use it when provided. */
+  runs?: () => PeakRun[]
 }
 
 /** Minimal landing-screen indicator: just a colored dot + PEAK/OFF-PEAK label. */
 export function PeakHomeIndicator(props: PeakHomeIndicatorProps) {
-  const { status } = usePeakStatus(props.ranges, { subscribe: props.subscribe })
+  const { status } = usePeakStatus(props.ranges, props.runs)
   const peak = () => status().peak
 
   return (

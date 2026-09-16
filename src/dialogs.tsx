@@ -11,34 +11,69 @@ export interface GuardMenuSignals {
   ack: (at?: number) => void
 }
 
-/** Open the /dspeak config menu: windows, guard, reset. */
+/** Open the /dspeak config menu: windows, guard, diagnostics, reset. */
 export function openConfigMenu(
   api: TuiPluginApi,
   ranges: () => TimeRange[],
   save: (next: TimeRange[]) => void,
   guard?: GuardMenuSignals,
+  diagnostics?: () => string[],
 ) {
   const g = guard?.settings()
   const guardTitle = guard ? `Peak guard: ${g?.enabled ? `on (${g.mode}, ${formatCooldown(g.cooldownMs)})` : "off"}` : "Peak guard"
+  const backHere = () => openConfigMenu(api, ranges, save, guard, diagnostics)
   api.ui.dialog.replace(() => (
     <api.ui.DialogSelect
       title="DeepSeek Peak - configure peak windows"
       placeholder="Choose an action"
       options={[
-        { title: "Add a peak window", value: "add", onSelect: () => openAddRange(api, ranges, save, guard) },
-        { title: "Remove a peak window", value: "remove", onSelect: () => openRemoveRange(api, ranges, save, guard) },
+        { title: "Add a peak window", value: "add", onSelect: () => openAddRange(api, ranges, save, guard, diagnostics) },
+        { title: "Remove a peak window", value: "remove", onSelect: () => openRemoveRange(api, ranges, save, guard, diagnostics) },
         ...(guard
           ? [
               {
                 title: guardTitle,
                 value: "guard",
-                onSelect: () => openGuardMenu(api, guard, () => openConfigMenu(api, ranges, save, guard)),
+                onSelect: () => openGuardMenu(api, guard, backHere),
+              },
+            ]
+          : []),
+        ...(diagnostics
+          ? [
+              {
+                title: "Clock diagnostics",
+                value: "diag",
+                description: "Heartbeat, coverage size, event delivery counters",
+                onSelect: () => openDiagnostics(api, diagnostics, backHere),
               },
             ]
           : []),
         { title: "Reset to DeepSeek defaults", value: "reset", onSelect: () => openReset(api, save) },
         { title: "Done", value: "done", onSelect: () => api.ui.dialog.clear() },
       ]}
+    />
+  ))
+}
+
+/**
+ * Read-only heartbeat snapshot: clock age, coverage size, event counters.
+ * Uses DialogConfirm (plain-string message) instead of a disabled-option
+ * select list: the host renders disabled select options as an empty list,
+ * while the confirm message path is proven by the reset dialog.
+ */
+export function openDiagnostics(api: TuiPluginApi, diagnostics: () => string[], back: () => void) {
+  let message: string
+  try {
+    message = diagnostics().join("\n")
+  } catch {
+    message = "Diagnostics unavailable."
+  }
+  api.ui.dialog.replace(() => (
+    <api.ui.DialogConfirm
+      title="DeepSeek Peak - clock diagnostics"
+      message={message}
+      onConfirm={back}
+      onCancel={back}
     />
   ))
 }
@@ -126,8 +161,9 @@ export function openAddRange(
   ranges: () => TimeRange[],
   save: (next: TimeRange[]) => void,
   guard?: GuardMenuSignals,
+  diagnostics?: () => string[],
 ) {
-  const back = () => openConfigMenu(api, ranges, save, guard)
+  const back = () => openConfigMenu(api, ranges, save, guard, diagnostics)
   api.ui.dialog.replace(() => (
     <api.ui.DialogPrompt
       title="Add a peak window (UTC)"
@@ -162,8 +198,9 @@ export function openRemoveRange(
   ranges: () => TimeRange[],
   save: (next: TimeRange[]) => void,
   guard?: GuardMenuSignals,
+  diagnostics?: () => string[],
 ) {
-  const back = () => openConfigMenu(api, ranges, save, guard)
+  const back = () => openConfigMenu(api, ranges, save, guard, diagnostics)
   const list = ranges()
   if (!list.length) {
     api.ui.toast({ variant: "info", message: "No peak windows to remove" })

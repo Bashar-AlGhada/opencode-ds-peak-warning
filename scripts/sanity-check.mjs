@@ -6,6 +6,7 @@ import {
   formatDays,
   formatDuration,
   formatMinutes,
+  localMinutes,
   migrateLegacyRanges,
   minutesUntilStart,
   nextOccurrence,
@@ -647,6 +648,218 @@ const DS_ARGS = { sessionID: "s", model: { providerID: "deepseek", modelID: "dee
   await pending
   handle.uninstall()
 }
+
+// --- merged coverage array: built at write time, read per tick ---
+import {
+  beijingWeekMinute,
+  buildCoverageRuns,
+  coerceCoverageDoc,
+  coverageFingerprint,
+  isCoverageFresh,
+  makeCoverageDoc,
+  MINUTES_PER_WEEK,
+  nextTransitionInRuns,
+  statusForRuns,
+  statusInRuns,
+} from "../src/ranges.ts"
+import {
+  CLOCK_EVENT_TYPES,
+  clockDiagnostics,
+  gateAllows,
+  poke,
+  resetClockForTests,
+} from "../src/clock.ts"
+import { CLOCK_EVENT_GATE_MS } from "../src/config.ts"
+import { peakSummaryFromRuns } from "../src/guard-intercept.ts"
+
+check("week minute Wed 03:30Z -> Beijing Wed 11:30", beijingWeekMinute(d("2026-08-26T03:30:00Z")), 3 * 1440 + 690)
+check("week minute at Beijing midnight edge", beijingWeekMinute(d("2026-08-28T16:00:00Z")), 6 * 1440 + 0)
+check("defaults build 10 disjoint runs", buildCoverageRuns(DEFAULT_RANGES).length, 10)
+
+// Overlapping every-day windows merge in the array, not in the settings.
+const OVERLAP = [{ start: "01:00", end: "04:00" }, { start: "03:00", end: "06:00" }, { start: "06:00", end: "08:00", days: [4] }]
+{
+  const runs = buildCoverageRuns(OVERLAP)
+  // Daily [01-06) plus Thursday adjacency-merged [01-06)+[06-08 Thu] -> 7 runs.
+  check("overlapping windows merge to 7 runs", runs.length, 7)
+  check("merged Thursday covers 07:00Z", statusForRuns(runs, d("2026-08-27T07:00:00Z")), true)
+  check("merged Wednesday off at 07:00Z", statusForRuns(runs, d("2026-08-26T07:00:00Z")), false)
+}
+
+// Every-day wrap plus a Thursday-only window: both fire on Thursday.
+const EVERY_THU = [{ start: "22:00", end: "02:00" }, { start: "06:00", end: "08:00", days: [4] }]
+{
+  const runs = buildCoverageRuns(EVERY_THU)
+  check("every-day + Thursday-only -> 8 runs", runs.length, 8)
+  check("Thursday-only fires Thu 07:00Z", statusForRuns(runs, d("2026-08-27T07:00:00Z")), true)
+  check("Thursday-only quiet Wed 07:00Z", statusForRuns(runs, d("2026-08-26T07:00:00Z")), false)
+  check("every-day fires Wed 23:00Z", statusForRuns(runs, d("2026-08-26T23:00:00Z")), true)
+}
+
+check("all-day absorbs to one full-week run", buildCoverageRuns([{ start: "00:00", end: "00:00" }]), [
+  { start: 0, end: MINUTES_PER_WEEK },
+])
+check("adjacent windows merge per day", buildCoverageRuns([{ start: "01:00", end: "02:00" }, { start: "02:00", end: "03:00" }]).length, 7)
+check("empty ranges -> no runs", buildCoverageRuns([]), [])
+
+// A UTC window straddling Beijing midnight stays continuous across it (no flip
+// at midnight for every-day patterns), merging into one run per day-boundary;
+// only the week edge itself splits.
+{
+  const runs = buildCoverageRuns([{ start: "15:30", end: "16:30" }])
+  check("midnight-straddling window -> 8 runs", runs.length, 8)
+  check("week-edge head run", runs[0], { start: 0, end: 30 })
+  check("week-edge tail run", runs[runs.length - 1], { start: MINUTES_PER_WEEK - 30, end: MINUTES_PER_WEEK })
+}
+
+// Binary-search edge semantics (start inclusive, end exclusive).
+{
+  const runs = [{ start: 60, end: 120 }]
+  check("run start inclusive", statusInRuns(runs, 60), true)
+  check("run interior", statusInRuns(runs, 119), true)
+  check("run end exclusive", statusInRuns(runs, 120), false)
+  check("before run", statusInRuns(runs, 59), false)
+  check("empty runs never peak", statusInRuns([], 60), false)
+}
+
+// --- fingerprint + coverage doc (persisted array, rebuild on mismatch) ---
+{
+  const a = makeCoverageDoc(DEFAULT_RANGES)
+  check("doc fingerprint verifies", isCoverageFresh(a, DEFAULT_RANGES), true)
+  check("doc stale after settings change", isCoverageFresh(a, [...DEFAULT_RANGES, { start: "20:00", end: "21:00" }]), false)
+  check("fingerprint stable for equal input", coverageFingerprint(DEFAULT_RANGES), coverageFingerprint(DEFAULT_RANGES.map((r) => ({ ...r }))))
+  // Round-trip through JSON (KV serialization) then coerce.
+  const revived = coerceCoverageDoc(JSON.parse(JSON.stringify(a)))
+  check("doc round-trips through KV", revived, a)
+  check("legacy plain array rejected", coerceCoverageDoc(DEFAULT_RANGES), null)
+  check("garbage rejected", coerceCoverageDoc({ v: 1, ranges: [], runs: [], fingerprint: "nope" }), null)
+  check("tampered fingerprint rejected", coerceCoverageDoc({ ...a, fingerprint: "tampered" }), null)
+  check("overlapping runs rejected", coerceCoverageDoc({ ...a, runs: [{ start: 0, end: 100 }, { start: 50, end: 150 }] }), null)
+  check("malformed runs rejected", coerceCoverageDoc({ ...a, runs: [{ start: -1, end: 50 }] }), null)
+  // Doc deep-copies: later caller mutation cannot corrupt the stored array.
+  const src = [{ start: "01:00", end: "02:00" }]
+  const doc = makeCoverageDoc(src)
+  src[0].start = "09:00"
+  src.push({ start: "10:00", end: "11:00" })
+  check("doc immune to caller mutation", doc.ranges, [{ start: "01:00", end: "02:00" }])
+}
+
+// --- equivalence: array readers match the direct reference implementation ---
+const EQUIV_SETS = {
+  defaults: DEFAULT_RANGES,
+  overlap: OVERLAP,
+  everyThu: EVERY_THU,
+  wrap: [{ start: "22:00", end: "02:00" }, { start: "15:30", end: "16:30", days: [6] }],
+  allDay: [{ start: "00:00", end: "00:00" }],
+  empty: [],
+}
+{
+  const weekBase = d("2026-08-24T00:00:00Z").getTime() // a Monday
+  for (const [name, set] of Object.entries(EQUIV_SETS)) {
+    const runs = buildCoverageRuns(set)
+    let mismatches = 0
+    for (let m = 0; m < MINUTES_PER_WEEK; m++) {
+      const at = new Date(weekBase + m * 60_000)
+      if (statusForDate(at, set).peak !== statusForRuns(runs, at)) mismatches++
+    }
+    check(`status equivalence full week: ${name}`, mismatches, 0)
+    // Transitions sampled every 6h over 3 days (covers wrap + weekend skip).
+    let tMismatches = 0
+    for (let h = 0; h < 72; h += 6) {
+      const at = new Date(weekBase + h * 3_600_000)
+      const a = nextTransition(set, at)
+      const b = nextTransitionInRuns(runs, at)
+      if (a.at.getTime() !== b.at.getTime() || a.to !== b.to) tMismatches++
+    }
+    check(`transition equivalence sampled: ${name}`, tMismatches, 0)
+    // Run-count bound: each window contributes at most 2 segments per day,
+    // so the array stays linear in the settings (not in the scan horizon).
+    check(`run-count bound: ${name}`, runs.length <= 14 * Math.max(1, set.length), true)
+  }
+}
+
+// --- summaries agree whether built from ranges or from runs ---
+for (const at of [wedPeak, wedOff, d("2026-08-29T02:30:00Z")]) {
+  check(`summary agreement ${at.toISOString()}`, peakSummaryFromRuns(buildCoverageRuns(DEFAULT_RANGES), at), peakSummary(DEFAULT_RANGES, at))
+}
+check("runs summary all-day peaks", peakSummaryFromRuns(buildCoverageRuns(ALWAYS_PEAK), wedPeak).includes("PEAK"), true)
+check("runs summary empty off-peak", peakSummaryFromRuns(buildCoverageRuns(NEVER_PEAK), wedOff).includes("off-peak"), true)
+
+// --- clock: nanosecond poke gate, counters, tiers ---
+check("gate blocks inside window", gateAllows(1_000, 1_000 + CLOCK_EVENT_GATE_MS - 1), false)
+check("gate allows at threshold", gateAllows(1_000, 1_000 + CLOCK_EVENT_GATE_MS), true)
+{
+  resetClockForTests()
+  for (let i = 0; i < 1000; i++) poke("message.part.delta")
+  const snap = clockDiagnostics()
+  check("1k-event burst -> exactly one refresh", snap.refreshCount, 1)
+  check("burst counted per type", snap.eventCounts["message.part.delta"], 1000)
+  poke("custom-type")
+  check("unknown sources counted too", clockDiagnostics().eventCounts["custom-type"], 1)
+  check("reset leaves clock stopped", clockDiagnostics().started, false)
+}
+check("event tiers cover lifecycle", CLOCK_EVENT_TYPES.includes("session.updated"), true)
+check("event tiers cover interaction", CLOCK_EVENT_TYPES.includes("tui.prompt.append"), true)
+check("event tiers cover generation firehose", CLOCK_EVENT_TYPES.includes("message.part.delta"), true)
+check("event tiers have no duplicates", new Set(CLOCK_EVENT_TYPES).size, CLOCK_EVENT_TYPES.length)
+
+// The watchdog must fan in the ENTIRE Event["type"] union: extract every
+// dotted type literal from the SDK's generated types (numeric-suffixed
+// entries like "session.updated.1" are schema duplicates, not bus events)
+// and enforce coverage in both directions, so a new SDK event fails loudly.
+{
+  const sdkTypes = readFileSync(
+    join(dirname(new URL(import.meta.url).pathname.replace(/^\/([A-Za-z]:)/, "$1")), "..", "node_modules", "@opencode-ai", "sdk", "dist", "v2", "gen", "types.gen.d.ts"),
+    "utf8",
+  )
+  const sdkEvents = new Set(
+    [...sdkTypes.matchAll(/type: "([a-z0-9][a-z0-9._-]*)"/g)]
+      .map((m) => m[1])
+      .filter((t) => t.includes(".") && !/\.\d+$/.test(t)),
+  )
+  const missing = [...sdkEvents].filter((t) => !CLOCK_EVENT_TYPES.includes(t))
+  const extra = CLOCK_EVENT_TYPES.filter((t) => !sdkEvents.has(t))
+  check("watchdog covers every SDK event type", missing, [])
+  check("watchdog subscribes to real event types only", extra, [])
+}
+
+// --- time boundaries: UTC clock vs Beijing calendar vs local display ---
+{
+  // Week-minute mapping agrees with the day + clock primitives over 10 days.
+  const base = d("2026-08-24T00:00:00Z").getTime()
+  let bad = 0
+  for (let m = 0; m < 10 * 1440; m += 37) {
+    const at = new Date(base + m * 60_000)
+    const w = beijingWeekMinute(at)
+    if (Math.floor(w / 1440) !== beijingDayOfWeek(at)) bad++
+    if (w % 1440 !== (utcMinutes(at) + 480) % 1440) bad++
+  }
+  check("week-minute mapping matches dow+clock", bad, 0)
+  // Sub-minute instants: both implementations drop seconds identically.
+  let secBad = 0
+  for (const set of [DEFAULT_RANGES, OVERLAP, EVERY_THU]) {
+    const runs = buildCoverageRuns(set)
+    for (let h = 0; h < 168; h++) {
+      const at = new Date(base + h * 3_600_000 + 59_500) // :59.5s of every hour
+      if (statusForDate(at, set).peak !== statusForRuns(runs, at)) secBad++
+    }
+  }
+  check("seconds dropped identically by both paths", secBad, 0)
+}
+check("epoch maps to Thu 08:00 Beijing", beijingWeekMinute(d("1970-01-01T00:00:00Z")), 4 * 1440 + 480)
+{
+  // A UTC-midnight window lands on Beijing 08:00, far from any day edge.
+  const runs = buildCoverageRuns([{ start: "00:00", end: "01:00" }])
+  check("UTC 00:30Z peaks (Beijing 08:30)", statusForRuns(runs, d("2026-08-26T00:30:00Z")), true)
+  check("UTC 01:00Z off (exclusive end)", statusForRuns(runs, d("2026-08-26T01:00:00Z")), false)
+}
+{
+  // Beijing-midnight flip kills a day-pattern window mid-UTC-span (runs path).
+  const runs = buildCoverageRuns(friNight)
+  check("runs: Fri window alive 15:59Z", statusForRuns(runs, d("2026-08-28T15:59:00Z")), true)
+  check("runs: Fri window dead 16:00Z", statusForRuns(runs, d("2026-08-28T16:00:00Z")), false)
+}
+check("local display follows the clock (UTC)", localMinutes(d("2026-08-26T02:30:00Z"), "UTC"), 150)
 
 // --- every relative import in src/ must resolve to an existing file ---
 // Guards against broken specifiers (e.g. ".ts" pointing at a ".tsx" file),

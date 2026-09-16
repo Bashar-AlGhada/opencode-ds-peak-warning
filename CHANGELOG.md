@@ -2,6 +2,30 @@
 
 All notable changes to this project will be documented in this file.
 
+## [1.3.0] - 2026-09-16
+
+### Added
+
+- Merged coverage array: overlapping windows stay as entered in settings and
+  are unioned into a sorted run list once per settings change (persisted with
+  a fingerprint; any mismatch rebuilds instead of trusting stale data). Tick
+  reads are now a binary search instead of a multi-day minute scan.
+- Singleton clock with event fan-in over the entire `Event` union (all
+  `session.*`, `tui.*`, `message.*`, generation, workspace, pty and misc
+  lifecycle types) through a rate-limited `poke()`, plus a read-only `Clock
+  diagnostics` row in `/dspeak` (clock age, tick/refresh counters, per-type
+  delivery counts including silent types). A test enforces the subscription
+  list against the SDK's generated types in both directions, so new upstream
+  event types fail loudly instead of going unwatched.
+- An explicitly emptied window list now persists as "no peak windows" across
+  restarts instead of resurrecting the defaults.
+
+### Fixed
+
+- Stale-clock hardening: one shared clock per process (per-view timers can no
+  longer diverge), self-sustaining fallback interval, and wake-from-sleep heal
+  on first interaction.
+
 ## [1.2.0] - 2026-09-15
 
 ### Added

@@ -2,6 +2,18 @@
 
 All notable changes to this project will be documented in this file.
 
+## [1.3.2] - 2026-09-18
+
+### Fixed
+
+- Clock updates again. The 1.3.1 precompiled-`dist` packaging froze the
+  panel completely (painted once, never repainted), so this release reverts
+  to the 1.3.0 source entrypoint: the singleton clock with event fan-in and
+  the staleness watchdog drives live repaints again. Version 1.3.1 stays
+  published but is deprecated — do not install it.
+- Panel footer now shows the release version (`edit: /dspeak · v1.3.2`) so a
+  running install can be told apart from a stale cached copy.
+
 ## [1.3.0] - 2026-09-16
 
 ### Added

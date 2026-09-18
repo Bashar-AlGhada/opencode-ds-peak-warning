@@ -861,28 +861,6 @@ check("epoch maps to Thu 08:00 Beijing", beijingWeekMinute(d("1970-01-01T00:00:0
 }
 check("local display follows the clock (UTC)", localMinutes(d("2026-08-26T02:30:00Z"), "UTC"), 150)
 
-// --- packaging: ./tui must resolve to precompiled JS (raw TSX never repaints:
-// the packaged CLI applies no Solid transform under node_modules, so source
-// renders its initial frame while signal updates stay frozen) ---
-{
-  const repoRoot = join(dirname(new URL(import.meta.url).pathname.replace(/^\/([A-Za-z]:)/, "$1")), "..")
-  const pkg = JSON.parse(readFileSync(join(repoRoot, "package.json"), "utf8"))
-  check("tui entrypoint is precompiled", pkg.exports?.["./tui"]?.import, "./dist/tui.js")
-  check("dist shipped in files", pkg.files.includes("dist"), true)
-  // When dist exists (npm run build), prove the shipped artifact's logic
-  // matches src. Skipped on checkouts without a build.
-  try {
-    const distRanges = await import("../dist/ranges.js")
-    check(
-      "dist build matches src",
-      JSON.stringify(distRanges.buildCoverageRuns(DEFAULT_RANGES)),
-      JSON.stringify(buildCoverageRuns(DEFAULT_RANGES)),
-    )
-  } catch {
-    console.log("skip dist check (run npm run build first)")
-  }
-}
-
 // --- every relative import in src/ must resolve to an existing file ---
 // Guards against broken specifiers (e.g. ".ts" pointing at a ".tsx" file),
 // which fail silently at plugin load time in opencode.

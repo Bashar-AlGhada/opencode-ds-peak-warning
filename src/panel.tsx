@@ -5,7 +5,6 @@ import type { PeakRun } from "./ranges.ts"
 import { DAY_LABELS } from "./config.ts"
 import type { TimeRange } from "./types.ts"
 import { usePeakStatus } from "./status.ts"
-import { PLUGIN_VERSION } from "./version.ts"
 
 export interface PeakPanelProps {
   theme: TuiThemeCurrent
@@ -75,7 +74,7 @@ export function PeakPanel(props: PeakPanelProps) {
         const line = props.guardLine?.()
         return line ? <text fg={props.theme.textMuted}>{line}</text> : null
       })()}
-      <text fg={props.theme.textMuted}>edit: /dspeak · v{PLUGIN_VERSION}</text>
+      <text fg={props.theme.textMuted}>edit: /dspeak</text>
     </box>
   )
 }

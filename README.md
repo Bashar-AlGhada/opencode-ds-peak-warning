@@ -59,13 +59,13 @@ opencode plugin ~/.config/opencode/ds-peak-warningx -g
 ## Install from npm
 
 ```sh
-opencode plugin ds-peak-warningx@1.3.1 -g    # global, or without -g per project
+opencode plugin ds-peak-warningx@1.3.0 -g    # global, or without -g per project
 ```
 
 Or from inside the opencode TUI:
 
 1. Press `ctrl+p` to open the command palette, type `plugins`, and select it.
-2. Press `shift+i` to install a plugin, type `ds-peak-warningx@1.3.1`, and press enter.
+2. Press `shift+i` to install a plugin, type `ds-peak-warningx@1.3.0`, and press enter.
 3. Press `space` to toggle the scope (local project vs global), then confirm.
 4. Restart opencode.
 
@@ -76,7 +76,7 @@ version you specify. Reinstall with the new version and the force flag, then
 restart opencode:
 
 ```sh
-opencode plugin ds-peak-warningx@1.3.1 -g -f   # keep -g if installed globally
+opencode plugin ds-peak-warningx@1.3.0 -g -f   # keep -g if installed globally
 ```
 
 Check this page or `npm view ds-peak-warningx version` for the latest release.
@@ -114,7 +114,7 @@ You can set the windows at install time with the `[spec, options]` tuple in `tui
 
 ```json
 {
-  "plugin": [["ds-peak-warningx@1.3.1", { "ranges": [
+  "plugin": [["ds-peak-warningx@1.3.0", { "ranges": [
     { "start": "01:00", "end": "04:00", "days": [1, 2, 3, 4, 5] },
     { "start": "22:00", "end": "02:00" }
   ] }]]
@@ -138,16 +138,11 @@ You can set the windows at install time with the `[spec, options]` tuple in `tui
 npm install
 npm run typecheck   # tsc --noEmit
 npm run sanity      # logic boundary checks
-npm run build       # tsc emit -> dist/ (the published ./tui entrypoint)
 npm run pack        # npm pack --dry-run, shows the published tarball contents
 ```
 
-The package targets the TUI via `exports["./tui"]`, which resolves to
-precompiled `dist/` output. Raw `.tsx` source must NOT be the entrypoint: the
-packaged opencode CLI applies no Solid transform to external plugin modules,
-so source-rendered slots show their initial frame while signal updates never
-repaint. For live local testing, run `npm run build` and point `tui.json` at
-`<repo>/dist/index.js` (it exports the required plugin `id`).
+The package targets the TUI via `exports["./tui"]` and ships raw `.tsx` source
+(opencode's runtime transpiles it).
 
 ## License
 

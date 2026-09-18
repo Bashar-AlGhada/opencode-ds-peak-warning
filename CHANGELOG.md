@@ -2,6 +2,31 @@
 
 All notable changes to this project will be documented in this file.
 
+## [1.3.1] - 2026-09-18
+
+### Fixed
+
+- Sidebar panel and home indicator now repaint live under npm installs. The
+  package shipped raw `.tsx` source, but the packaged opencode CLI applies no
+  Solid transform to external plugin modules, so slot content rendered its
+  initial frame while signal updates never repainted — timers, events, and
+  the guard all worked, only the display froze. `./tui` now resolves to
+  precompiled `dist/` output (built via `npm run build`); under an npm
+  install the host maps the bundle's bare `solid-js`/`@opentui/*` imports to
+  its singletons (one reactive graph). Sanity checks enforce the packaging
+  contract, and a headless liveness test (`npm run live`) proves a clock poke
+  re-runs the panel's subscribers.
+- Panel footer now shows the release version (`edit: /dspeak · v1.3.1`) so a
+  running install can be told apart from a stale cached copy.
+
+### Known limitations
+
+- Local file installs (a `tui.json` entry pointing at a path inside this
+  repo) stay static on hosts that map bare `@opentui/*` to their singletons
+  while leaving bare `solid-js` on the non-reactive server build: the panel
+  renders once and never repaints. Validate live behavior through the
+  published package, not a file entry.
+
 ## [1.3.0] - 2026-09-16
 
 ### Added

@@ -1,4 +1,5 @@
 node_modules/
+dist/
 .opencode/package.json
 .opencode/bun.lock
 *.log

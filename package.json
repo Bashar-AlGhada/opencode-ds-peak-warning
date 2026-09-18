@@ -1,6 +1,6 @@
 {
   "name": "ds-peak-warningx",
-  "version": "1.3.0",
+  "version": "1.3.1",
   "description": "DeepSeek peak/off-peak pricing warning in the opencode TUI sidebar",
   "keywords": [
     "opencode",
@@ -21,16 +21,22 @@
   },
   "type": "module",
   "exports": {
-    "./tui": "./src/index.tsx"
+    "./tui": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/tui.js"
+    }
   },
   "files": [
+    "dist",
     "src",
     "CHANGELOG.md"
   ],
   "scripts": {
+    "build": "tsc -p tsconfig.build.json",
     "typecheck": "tsc --noEmit",
     "sanity": "node --experimental-strip-types scripts/sanity-check.mjs",
-    "prepublishOnly": "npm run typecheck && npm run sanity",
+    "live": "bun scripts/live-src-test.ts",
+    "prepublishOnly": "npm run build && npm run sanity",
     "pack": "npm pack --dry-run"
   },
   "dependencies": {

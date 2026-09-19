@@ -2,7 +2,7 @@
 
 All notable changes to this project will be documented in this file.
 
-## [1.4.0] - 2026-09-18
+## [1.4.0] - 2026-09-19
 
 ### Added
 
@@ -14,9 +14,14 @@ All notable changes to this project will be documented in this file.
 - `/dspeak` opens with a live status header (peak state, UTC + local time,
   next switch with countdown, compact windows line) computed fresh on open
   and ticking with the shared clock, like the panel. Never persisted.
-- Home-screen dot carries a permanent muted `(can freeze)` note: a view can
-  paint stale data after sleep or a timer stall, so the status is guidance,
-  not a billing guarantee.
+- Status lines are now three-toned: red at peak, green off-peak, and yellow
+  when off-peak with a peak flip less than 30 minutes away. Applied to the
+  home dot, full panel, collapsed panel, and the `/dspeak` header from one
+  shared helper so the views cannot disagree.
+- Every status line — home screen, full sidebar panel, and collapsed panel —
+  carries a permanent muted `(can freeze)` note: a view can paint stale data
+  after sleep or a timer stall, so the status is guidance, not a billing
+  guarantee.
 
 ### Changed
 

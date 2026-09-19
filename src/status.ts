@@ -1,4 +1,5 @@
 import { createMemo } from "solid-js"
+import type { TuiThemeCurrent } from "@opencode-ai/plugin/tui"
 import { clockTick, ensureClockRunning, isClockStale, poke } from "./clock.ts"
 import { DAY_LABELS, MS_MIN } from "./config.ts"
 import {
@@ -40,6 +41,31 @@ export function formatTransitionAt(t: DateTransition, now: Date): string {
 /** Minutes until the transition ("in 1h 23m" style). The scan aligns to whole minutes. */
 export function formatTransitionIn(t: DateTransition, now: Date): string {
   return formatDuration(Math.round((t.at.getTime() - now.getTime()) / MS_MIN))
+}
+
+// Three-tone status color contract, shared by every status line (home dot,
+// full panel, collapsed panel, /dspeak header) so they can never disagree.
+
+/** Off-peak flips within this window render as "soon" (yellow). */
+export const PEAK_SOON_MS = 30 * MS_MIN
+
+export type StatusTone = "peak" | "soon" | "off-peak"
+
+/**
+ * Red-ish tone while peak, green when off-peak, yellow when off-peak but the
+ * next flip is into peak and less than 30 minutes away.
+ */
+export function statusTone(peak: boolean, transition: DateTransition, now: Date): StatusTone {
+  if (peak) return "peak"
+  if (transition.to && transition.at.getTime() - now.getTime() < PEAK_SOON_MS) return "soon"
+  return "off-peak"
+}
+
+/** Map a tone to its theme color: peak=error (red), soon=warning (yellow), off=success (green). */
+export function toneColor(theme: TuiThemeCurrent, tone: StatusTone) {
+  if (tone === "peak") return theme.error
+  if (tone === "soon") return theme.warning
+  return theme.success
 }
 
 // Reactive view state shared by the sidebar panel and the home-screen indicator.

@@ -15,9 +15,10 @@ weekday-based pricing rule can be configured.
 
 ## What you get
 
-- A colored `● PEAK` / `● OFF-PEAK` dot next to the prompt on the home screen,
-  with a permanent `(can freeze)` note: the display can paint stale data
-  after sleep or a timer stall, so treat it as guidance.
+- A colored `● PEAK` / `● OFF-PEAK` dot next to the prompt on the home screen:
+  red at peak, green off-peak, and yellow when off-peak but peak starts within
+  30 minutes. It carries a permanent `(can freeze)` note: the display can
+  paint stale data after sleep or a timer stall, so treat it as guidance.
 - A sidebar panel in every session showing current status, UTC + local time,
   the next transition across days (e.g. `Next: peak at 01:00 UTC Mon` after a
   Friday evening), and a per-window countdown that respects its weekday

@@ -3,7 +3,7 @@ import type { TuiThemeCurrent } from "@opencode-ai/plugin/tui"
 import { formatDays, formatMinutes } from "./ranges.ts"
 import type { PeakRun } from "./ranges.ts"
 import type { TimeRange } from "./types.ts"
-import { formatTransitionAt, formatTransitionIn, timezoneCity, usePeakStatus } from "./status.ts"
+import { formatTransitionAt, formatTransitionIn, statusTone, timezoneCity, toneColor, usePeakStatus } from "./status.ts"
 import { PLUGIN_VERSION } from "./version.ts"
 
 export interface PeakPanelProps {
@@ -16,9 +16,12 @@ export interface PeakPanelProps {
 }
 
 /** Sidebar panel sized for a narrow column: short lines, no overflowing rows. */
-export function PeakPanel(props: PeakPanelProps) {  const { now, time, status, transition, local, tz } = usePeakStatus(props.ranges, props.runs)
+export function PeakPanel(props: PeakPanelProps) {
+  const { now, time, status, transition, local, tz } = usePeakStatus(props.ranges, props.runs)
   const peak = () => status().peak
   const city = timezoneCity(tz)
+  // Red while peak, green off-peak, yellow when peak starts within 30 min.
+  const tone = () => toneColor(props.theme, statusTone(peak(), transition(), now()))
 
   // "01:00" today, or "Mon 01:00" when the flip lands on another day.
   const atLabel = () => formatTransitionAt(transition(), now())
@@ -31,9 +34,10 @@ export function PeakPanel(props: PeakPanelProps) {  const { now, time, status, t
       <text fg={props.theme.text}>
         <b>DeepSeek Pricing</b>
       </text>
-      {/* Status dot, amber when peak, green when off-peak, with the permanent
-          freeze disclaimer (a view can paint stale data after sleep/stall) */}
-      <text fg={peak() ? props.theme.warning : props.theme.success}>
+      {/* Status dot: red when peak, green when off-peak, yellow when peak is
+          under 30 minutes away, with the permanent freeze disclaimer (a view
+          can paint stale data after sleep/stall) */}
+      <text fg={tone()}>
         {"\u25CF"} {peak() ? "PEAK" : "OFF-PEAK"}
         <span style={{ fg: props.theme.textMuted }}> (can freeze)</span>
       </text>
@@ -74,14 +78,15 @@ export function PeakPanel(props: PeakPanelProps) {  const { now, time, status, t
  * basics stay visible without the time/window details.
  */
 export function PeakPanelMini(props: PeakPanelProps) {
-  const { status } = usePeakStatus(props.ranges, props.runs)
+  const { now, status, transition } = usePeakStatus(props.ranges, props.runs)
   const peak = () => status().peak
+  const tone = () => toneColor(props.theme, statusTone(peak(), transition(), now()))
 
   return (
     <box flexShrink={0} paddingTop={1} paddingBottom={1}>
-      {/* Status dot, amber when peak, green when off-peak, with the permanent
-          freeze disclaimer (a view can paint stale data after sleep/stall) */}
-      <text fg={peak() ? props.theme.warning : props.theme.success}>
+      {/* Status dot: red when peak, green off-peak, yellow when peak is under
+          30 minutes away, with the permanent freeze disclaimer */}
+      <text fg={tone()}>
         {"\u25CF"} {peak() ? "PEAK" : "OFF-PEAK"}
         <span style={{ fg: props.theme.textMuted }}> (can freeze)</span>
       </text>

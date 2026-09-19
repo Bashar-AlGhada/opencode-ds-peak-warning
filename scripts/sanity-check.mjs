@@ -281,7 +281,7 @@ check("utcMinutes matches getUTC*", utcMinutes(now), now.getUTCHours() * 60 + no
 
 // --- clock: minute alignment + staleness watchdog (sleep/long-run fix) ---
 import { CLOCK_ALIGN_BUFFER_MS, CLOCK_WATCHDOG_MS } from "../src/config.ts"
-import { isClockStale, msUntilNextTick } from "../src/status.ts"
+import { PEAK_SOON_MS, isClockStale, msUntilNextTick, statusTone } from "../src/status.ts"
 check("tick aligns past minute boundary", msUntilNextTick(60_000) > 60_000, true)
 check("tick delay includes buffer", msUntilNextTick(0), 60_000 + CLOCK_ALIGN_BUFFER_MS)
 check("tick mid-minute delay", msUntilNextTick(90_000), 30_000 + CLOCK_ALIGN_BUFFER_MS)
@@ -294,6 +294,17 @@ check("panel KV false wins", coercePanelVisible(false, true), false)
 check("panel missing KV falls back", coercePanelVisible(undefined, true), true)
 check("panel wrong-type KV falls back", coercePanelVisible("shown", true), true)
 check("guard default enabled", DEFAULT_GUARD_ENABLED, true)
+
+// --- status tone: red peak, green off-peak, yellow when peak < 30 min away ---
+const toneNow = d("2026-08-26T02:00:00Z") // Wed, inside the 01:00-04:00 UTC window
+const toneAt = (minutes) => new Date(toneNow.getTime() + minutes * 60_000)
+check("tone peak", statusTone(true, { at: toneAt(60), to: false }, toneNow), "peak")
+check("tone peak flip in 20m is soon", statusTone(false, { at: toneAt(20), to: true }, toneNow), "soon")
+check("tone peak flip in 29m is soon", statusTone(false, { at: toneAt(29), to: true }, toneNow), "soon")
+check("tone peak flip at exactly 30m is off-peak", statusTone(false, { at: toneAt(30), to: true }, toneNow), "off-peak")
+check("tone peak flip in 31m is off-peak", statusTone(false, { at: toneAt(31), to: true }, toneNow), "off-peak")
+check("tone flip into off-peak stays green", statusTone(false, { at: toneAt(10), to: false }, toneNow), "off-peak")
+check("soon window is 30 minutes", PEAK_SOON_MS, 30 * 60_000)
 
 // --- guard: DeepSeek-only peak gate with cooldown debounce ---
 import {

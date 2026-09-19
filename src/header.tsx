@@ -3,7 +3,7 @@ import type { TuiThemeCurrent } from "@opencode-ai/plugin/tui"
 import { formatDays, formatMinutes } from "./ranges.ts"
 import type { PeakRun } from "./ranges.ts"
 import type { TimeRange } from "./types.ts"
-import { formatTransitionAt, formatTransitionIn, timezoneCity, usePeakStatus } from "./status.ts"
+import { formatTransitionAt, formatTransitionIn, statusTone, timezoneCity, toneColor, usePeakStatus } from "./status.ts"
 
 export interface PeakDialogHeaderProps {
   theme: () => TuiThemeCurrent
@@ -24,6 +24,8 @@ export function PeakDialogHeader(props: PeakDialogHeaderProps) {
   const { now, time, status, transition, local, tz } = usePeakStatus(props.ranges, props.runs)
   const peak = () => status().peak
   const city = timezoneCity(tz)
+  // Red while peak, green off-peak, yellow when peak starts within 30 min.
+  const tone = () => toneColor(props.theme(), statusTone(peak(), transition(), now()))
 
   // Compact windows line (the panel uses one row per window; the dialog is
   // 60 wide, so a single joined line fits without overflowing).
@@ -40,8 +42,9 @@ export function PeakDialogHeader(props: PeakDialogHeaderProps) {
 
   return (
     <box flexDirection="column" paddingLeft={4} paddingRight={4} paddingBottom={1}>
-      {/* Status dot, amber when peak, green when off-peak */}
-      <text fg={peak() ? props.theme().warning : props.theme().success}>
+      {/* Status dot: red when peak, green when off-peak, yellow when peak is
+          under 30 minutes away */}
+      <text fg={tone()}>
         {"\u25CF"} {peak() ? "PEAK" : "OFF-PEAK"}
       </text>
       <text fg={props.theme().textMuted}>

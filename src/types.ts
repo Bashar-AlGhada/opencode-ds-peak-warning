@@ -12,13 +12,16 @@ export interface DsPeakOptions {
   // Peak windows overriding the defaults; each may carry a `days` pattern.
   ranges?: TimeRange[]
   order?: number
+  // Sidebar panel visibility; shown unless explicitly disabled. A saved KV
+  // value from the /dspeak toggle wins over this option.
+  panel?: boolean
   // Opt-in peak guard: confirm before prompting on DeepSeek during peak.
   guard?: Partial<GuardSettings>
 }
 
 /** Peak-guard settings (all fields resolved with defaults at load). */
 export interface GuardSettings {
-  /** Master switch. Default false. */
+  /** Master switch. Default true (on). */
   enabled: boolean
   /** "block" disables the prompt until confirmed; "warn" only toasts. */
   mode: "block" | "warn"

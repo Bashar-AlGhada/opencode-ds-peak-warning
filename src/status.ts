@@ -1,11 +1,46 @@
 import { createMemo } from "solid-js"
 import { clockTick, ensureClockRunning, isClockStale, poke } from "./clock.ts"
-import { detectTimezone, localMinutes, nextTransition, nextTransitionInRuns, statusForDate, statusForRuns, utcMinutes } from "./ranges.ts"
+import { DAY_LABELS, MS_MIN } from "./config.ts"
+import {
+  detectTimezone,
+  formatDuration,
+  formatMinutes,
+  localMinutes,
+  nextTransition,
+  nextTransitionInRuns,
+  statusForDate,
+  statusForRuns,
+  utcMinutes,
+} from "./ranges.ts"
 import type { DateTransition, PeakRun, StatusInfo } from "./ranges.ts"
 import type { TimeRange } from "./types.ts"
 
 // Re-exported for scripts/sanity-check.mjs (single source lives in clock.ts).
 export { isClockStale, msUntilNextTick } from "./clock.ts"
+
+// Shared display labels: the sidebar panel and the /dspeak settings header
+// must render identical status text, so the formatting lives here (single
+// source) instead of being duplicated per view.
+
+/** City-only timezone label ("Asia/Damascus" -> "Damascus"). */
+export function timezoneCity(tz: string): string {
+  return tz.includes("/") ? tz.split("/").pop()!.replace(/_/g, " ") : tz
+}
+
+/**
+ * "01:00" today, or "Mon 01:00" when the transition lands on another day.
+ * Compare against the ticking clock (not a fresh Date) so the label stays
+ * consistent with the displayed status even if a tick was missed.
+ */
+export function formatTransitionAt(t: DateTransition, now: Date): string {
+  const clock = formatMinutes(utcMinutes(t.at))
+  return t.at.toISOString().slice(0, 10) === now.toISOString().slice(0, 10) ? clock : `${DAY_LABELS[t.at.getUTCDay()]} ${clock}`
+}
+
+/** Minutes until the transition ("in 1h 23m" style). The scan aligns to whole minutes. */
+export function formatTransitionIn(t: DateTransition, now: Date): string {
+  return formatDuration(Math.round((t.at.getTime() - now.getTime()) / MS_MIN))
+}
 
 // Reactive view state shared by the sidebar panel and the home-screen indicator.
 export interface PeakStatus {

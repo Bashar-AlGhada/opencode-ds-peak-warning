@@ -2,6 +2,28 @@
 
 All notable changes to this project will be documented in this file.
 
+## [1.4.0] - 2026-09-18
+
+### Added
+
+- Sidebar panel is now optional: a `/dspeak` → `Sidebar panel` toggle (plus a
+  `panel` plugin option) collapses or expands it live, full details by
+  default. The collapsed state keeps the `● PEAK/OFF-PEAK` status, the freeze
+  disclaimer, and the `edit: /dspeak` line; the choice persists across
+  restarts and the home-screen status dot is unaffected.
+- `/dspeak` opens with a live status header (peak state, UTC + local time,
+  next switch with countdown, compact windows line) computed fresh on open
+  and ticking with the shared clock, like the panel. Never persisted.
+- Home-screen dot carries a permanent muted `(can freeze)` note: a view can
+  paint stale data after sleep or a timer stall, so the status is guidance,
+  not a billing guarantee.
+
+### Changed
+
+- Peak guard is now on by default (`block` mode), keeping both guard and
+  panel optional-but-on. Only installs with no saved guard settings gain the
+  new default; any saved `/dspeak` guard choice or `guard` option wins.
+
 ## [1.3.2] - 2026-09-18
 
 ### Fixed

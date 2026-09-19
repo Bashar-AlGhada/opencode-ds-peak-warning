@@ -1,9 +1,11 @@
 /** @jsxImportSource @opentui/solid */
 import type { TuiPluginApi } from "@opencode-ai/plugin/tui"
 import { formatDays, parseRange } from "./ranges.ts"
+import type { PeakRun } from "./ranges.ts"
 import { DEFAULT_RANGES } from "./config.ts"
 import { formatCooldown } from "./guard.ts"
 import type { GuardSettings, TimeRange } from "./types.ts"
+import { PeakDialogHeader } from "./header.tsx"
 
 export interface GuardMenuSignals {
   settings: () => GuardSettings
@@ -11,47 +13,85 @@ export interface GuardMenuSignals {
   ack: (at?: number) => void
 }
 
-/** Open the /dspeak config menu: windows, guard, diagnostics, reset. */
-export function openConfigMenu(
-  api: TuiPluginApi,
-  ranges: () => TimeRange[],
-  save: (next: TimeRange[]) => void,
-  guard?: GuardMenuSignals,
-  diagnostics?: () => string[],
-) {
-  const g = guard?.settings()
-  const guardTitle = guard ? `Peak guard: ${g?.enabled ? `on (${g.mode}, ${formatCooldown(g.cooldownMs)})` : "off"}` : "Peak guard"
-  const backHere = () => openConfigMenu(api, ranges, save, guard, diagnostics)
+export interface PanelMenuSignals {
+  visible: () => boolean
+  save: (next: boolean) => void
+}
+
+/**
+ * Everything the /dspeak dialogs need: live window/kv accessors plus the
+ * optional submenus. Passed by reference so every dialog (re)opens against
+ * current state and the status header recomputes on each open.
+ */
+export interface ConfigMenuCtx {
+  ranges: () => TimeRange[]
+  runs: () => PeakRun[]
+  save: (next: TimeRange[]) => void
+  guard?: GuardMenuSignals
+  panel?: PanelMenuSignals
+  diagnostics?: () => string[]
+}
+
+/** Open the /dspeak config menu: live status header, windows, panel, guard, diagnostics, reset. */
+export function openConfigMenu(api: TuiPluginApi, ctx: ConfigMenuCtx) {
+  const g = ctx.guard?.settings()
+  const guardTitle = ctx.guard
+    ? `Peak guard: ${g?.enabled ? `on (${g.mode}, ${formatCooldown(g.cooldownMs)})` : "off"}`
+    : "Peak guard"
+  const panel = ctx.panel
+  const panelTitle = panel ? `Sidebar panel: ${panel.visible() ? "shown" : "hidden"}` : "Sidebar panel"
+  const backHere = () => openConfigMenu(api, ctx)
+  // The status header sits above the select list inside the dialog panel
+  // (DialogSelect itself exposes no header prop). Both stay live: the
+  // header follows the shared clock, the list rebuilds on every reopen.
   api.ui.dialog.replace(() => (
-    <api.ui.DialogSelect
-      title="DeepSeek Peak - configure peak windows"
-      placeholder="Choose an action"
-      options={[
-        { title: "Add a peak window", value: "add", onSelect: () => openAddRange(api, ranges, save, guard, diagnostics) },
-        { title: "Remove a peak window", value: "remove", onSelect: () => openRemoveRange(api, ranges, save, guard, diagnostics) },
-        ...(guard
-          ? [
-              {
-                title: guardTitle,
-                value: "guard",
-                onSelect: () => openGuardMenu(api, guard, backHere),
-              },
-            ]
-          : []),
-        ...(diagnostics
-          ? [
-              {
-                title: "Clock diagnostics",
-                value: "diag",
-                description: "Heartbeat, coverage size, event delivery counters",
-                onSelect: () => openDiagnostics(api, diagnostics, backHere),
-              },
-            ]
-          : []),
-        { title: "Reset to DeepSeek defaults", value: "reset", onSelect: () => openReset(api, save) },
-        { title: "Done", value: "done", onSelect: () => api.ui.dialog.clear() },
-      ]}
-    />
+    <box flexDirection="column">
+      <PeakDialogHeader theme={() => api.theme.current} ranges={ctx.ranges} runs={ctx.runs} />
+      <api.ui.DialogSelect
+        title="DeepSeek Peak - configure peak windows"
+        placeholder="Choose an action"
+        options={[
+          { title: "Add a peak window", value: "add", onSelect: () => openAddRange(api, ctx) },
+          { title: "Remove a peak window", value: "remove", onSelect: () => openRemoveRange(api, ctx) },
+          ...(panel
+            ? [
+                {
+                  title: panelTitle,
+                  value: "panel",
+                  description: "Full details, or a compact status line, in the session sidebar",
+                  onSelect: () => {
+                    const next = !panel.visible()
+                    panel.save(next)
+                    api.ui.toast({ variant: "info", message: `Sidebar panel ${next ? "shown" : "hidden"}` })
+                    backHere()
+                  },
+                },
+              ]
+            : []),
+          ...(ctx.guard
+            ? [
+                {
+                  title: guardTitle,
+                  value: "guard",
+                  onSelect: () => openGuardMenu(api, ctx.guard!, backHere),
+                },
+              ]
+            : []),
+          ...(ctx.diagnostics
+            ? [
+                {
+                  title: "Clock diagnostics",
+                  value: "diag",
+                  description: "Heartbeat, coverage size, event delivery counters",
+                  onSelect: () => openDiagnostics(api, ctx.diagnostics!, backHere),
+                },
+              ]
+            : []),
+          { title: "Reset to DeepSeek defaults", value: "reset", onSelect: () => openReset(api, ctx.save) },
+          { title: "Done", value: "done", onSelect: () => api.ui.dialog.clear() },
+        ]}
+      />
+    </box>
   ))
 }
 
@@ -156,14 +196,9 @@ export function openGuardCooldown(api: TuiPluginApi, guard: GuardMenuSignals, ba
 }
 
 /** Prompt for a new window, validating input via parseRange before saving. */
-export function openAddRange(
-  api: TuiPluginApi,
-  ranges: () => TimeRange[],
-  save: (next: TimeRange[]) => void,
-  guard?: GuardMenuSignals,
-  diagnostics?: () => string[],
-) {
-  const back = () => openConfigMenu(api, ranges, save, guard, diagnostics)
+export function openAddRange(api: TuiPluginApi, ctx: ConfigMenuCtx) {
+  const back = () => openConfigMenu(api, ctx)
+  const { ranges, save } = ctx
   api.ui.dialog.replace(() => (
     <api.ui.DialogPrompt
       title="Add a peak window (UTC)"
@@ -193,14 +228,9 @@ export function openAddRange(
 }
 
 /** Let the user pick an existing window to delete. */
-export function openRemoveRange(
-  api: TuiPluginApi,
-  ranges: () => TimeRange[],
-  save: (next: TimeRange[]) => void,
-  guard?: GuardMenuSignals,
-  diagnostics?: () => string[],
-) {
-  const back = () => openConfigMenu(api, ranges, save, guard, diagnostics)
+export function openRemoveRange(api: TuiPluginApi, ctx: ConfigMenuCtx) {
+  const back = () => openConfigMenu(api, ctx)
+  const { ranges, save } = ctx
   const list = ranges()
   if (!list.length) {
     api.ui.toast({ variant: "info", message: "No peak windows to remove" })

@@ -1,5 +1,5 @@
 /** @jsxImportSource @opentui/solid */
-import { createSignal } from "solid-js"
+import { createSignal, Show } from "solid-js"
 import type { TuiPlugin, TuiPluginApi, TuiPluginModule } from "@opencode-ai/plugin/tui"
 import {
   coerceCoverageDoc,
@@ -16,14 +16,17 @@ import {
 } from "./clock.ts"
 import {
   DEFAULT_GUARD_COOLDOWN_MS,
+  DEFAULT_GUARD_ENABLED,
   DEFAULT_GUARD_PROVIDERS,
   DEFAULT_RANGES,
   DEFAULT_SLOT_ORDER,
   KV_GUARD_ACK_KEY,
   KV_GUARD_KEY,
+  KV_PANEL_KEY,
   KV_RANGES_KEY,
   KV_RUNS_KEY,
   WEEKDAY_DEFAULT_DAYS,
+  coercePanelVisible,
 } from "./config.ts"
 import type { DsPeakOptions, GuardSettings, TimeRange } from "./types.ts"
 import { sanitizeGuardSettings } from "./guard.ts"
@@ -32,7 +35,7 @@ import { formatLastActivity, installPromptGuard, type GuardActivity } from "./gu
 import { parseConfigModel } from "./guard.ts"
 import { openConfigMenu } from "./dialogs.tsx"
 import { showPeakConfirmDialog } from "./guard-ui.tsx"
-import { PeakPanel } from "./panel.tsx"
+import { PeakPanel, PeakPanelMini } from "./panel.tsx"
 import { PeakHomeIndicator } from "./home.tsx"
 
 /**
@@ -90,10 +93,15 @@ function persistCoverage(api: TuiPluginApi, doc: CoverageDoc): void {
 }
 
 function defaultGuard(): GuardSettings {
-  return { enabled: false, mode: "block", cooldownMs: DEFAULT_GUARD_COOLDOWN_MS, providers: [...DEFAULT_GUARD_PROVIDERS] }
+  return {
+    enabled: DEFAULT_GUARD_ENABLED,
+    mode: "block",
+    cooldownMs: DEFAULT_GUARD_COOLDOWN_MS,
+    providers: [...DEFAULT_GUARD_PROVIDERS],
+  }
 }
 
-/** Precedence: saved KV value > plugin `guard` option > defaults (off). */
+/** Precedence: saved KV value > plugin `guard` option > defaults (guard on). */
 function loadGuard(api: TuiPluginApi, opts: Partial<DsPeakOptions>): GuardSettings {
   const fallback = sanitizeGuardSettings(opts.guard, defaultGuard())
   try {
@@ -115,6 +123,21 @@ function loadLastAck(api: TuiPluginApi): number {
   return 0
 }
 
+/**
+ * Sidebar panel visibility. Precedence: saved KV toggle > plugin `panel`
+ * option > visible. A non-boolean KV entry (missing key, wrong type) falls
+ * through to the option/default instead of hiding the panel.
+ */
+function loadPanelVisible(api: TuiPluginApi, opts: Partial<DsPeakOptions>): boolean {
+  const fallback = typeof opts.panel === "boolean" ? opts.panel : true
+  try {
+    return coercePanelVisible(api.kv.get<unknown>(KV_PANEL_KEY), fallback)
+  } catch {
+    // ignore kv read errors
+  }
+  return fallback
+}
+
 const tui: TuiPlugin = async (api, options) => {
   const opts = (options ?? {}) as Partial<DsPeakOptions>
   ensureClockRunning()
@@ -128,6 +151,7 @@ const tui: TuiPlugin = async (api, options) => {
   const runs = () => coverage().runs
   const [guardSettings, setGuardSettings] = createSignal<GuardSettings>(loadGuard(api, opts))
   const [lastAck, setLastAck] = createSignal<number>(loadLastAck(api))
+  const [panelVisible, setPanelVisible] = createSignal<boolean>(loadPanelVisible(api, opts))
   const [activity, setActivity] = createSignal<GuardActivity | null>(null)
   const [guardInstalled, setGuardInstalled] = createSignal(false)
 
@@ -145,6 +169,17 @@ const tui: TuiPlugin = async (api, options) => {
     setGuardSettings(next)
     try {
       api.kv.set(KV_GUARD_KEY, next)
+    } catch {
+      // kv may be unavailable; keep in-memory state
+    }
+  }
+
+  // Sidebar panel toggle: in-memory signal for instant hiding plus KV so the
+  // choice survives restarts. The home-screen status dot is unaffected.
+  const savePanelVisible = (next: boolean) => {
+    setPanelVisible(next)
+    try {
+      api.kv.set(KV_PANEL_KEY, next)
     } catch {
       // kv may be unavailable; keep in-memory state
     }
@@ -282,14 +317,23 @@ const tui: TuiPlugin = async (api, options) => {
 
   // Info-only slots (sidebar panel + home indicator). The guard no longer
   // replaces the prompt, so there is no replace-mode conflict with prompt
-  // plugins such as vim.
+  // plugins such as vim. The sidebar panel is gated on the visibility
+  // signal, so the /dspeak toggle applies live; hidden state collapses to
+  // the compact status/disclaimer/edit line instead of disappearing.
   try {
     api.slots.register({
       order,
       slots: {
-        // Render the pricing panel in the session sidebar.
+        // Render the pricing panel in the session sidebar (togglable, on by default).
         sidebar_content(ctx) {
-          return <PeakPanel theme={ctx.theme.current} ranges={ranges} runs={runs} guardLine={guardLine} />
+          return (
+            <Show
+              when={panelVisible()}
+              fallback={<PeakPanelMini theme={ctx.theme.current} ranges={ranges} runs={runs} />}
+            >
+              <PeakPanel theme={ctx.theme.current} ranges={ranges} runs={runs} guardLine={guardLine} />
+            </Show>
+          )
         },
         // Render the minimal PEAK/OFF-PEAK dot on the landing screen.
         home_prompt_right(ctx) {
@@ -307,7 +351,14 @@ const tui: TuiPlugin = async (api, options) => {
 
   // Back the /dspeak command with the config menu dialogs.
   const configure = () =>
-    openConfigMenu(api, ranges, save, { settings: guardSettings, saveSettings: saveGuard, ack }, diagnosticLines)
+    openConfigMenu(api, {
+      ranges,
+      runs,
+      save,
+      guard: { settings: guardSettings, saveSettings: saveGuard, ack },
+      panel: { visible: panelVisible, save: savePanelVisible },
+      diagnostics: diagnosticLines,
+    })
   // Pre-confirm from anywhere (palette or slash): starts the cooldown without
   // needing a pending prompt.
   const confirmPeak = () => {

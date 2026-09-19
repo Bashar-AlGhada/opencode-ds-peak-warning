@@ -1,10 +1,9 @@
 /** @jsxImportSource @opentui/solid */
 import type { TuiThemeCurrent } from "@opencode-ai/plugin/tui"
-import { formatDays, formatDuration, formatMinutes, utcMinutes } from "./ranges.ts"
+import { formatDays, formatMinutes } from "./ranges.ts"
 import type { PeakRun } from "./ranges.ts"
-import { DAY_LABELS } from "./config.ts"
 import type { TimeRange } from "./types.ts"
-import { usePeakStatus } from "./status.ts"
+import { formatTransitionAt, formatTransitionIn, timezoneCity, usePeakStatus } from "./status.ts"
 import { PLUGIN_VERSION } from "./version.ts"
 
 export interface PeakPanelProps {
@@ -16,38 +15,27 @@ export interface PeakPanelProps {
   guardLine?: () => string | null
 }
 
-const MS_MIN = 60_000
-
 /** Sidebar panel sized for a narrow column: short lines, no overflowing rows. */
-export function PeakPanel(props: PeakPanelProps) {
-  const { now, time, status, transition, local, tz } = usePeakStatus(props.ranges, props.runs)
+export function PeakPanel(props: PeakPanelProps) {  const { now, time, status, transition, local, tz } = usePeakStatus(props.ranges, props.runs)
   const peak = () => status().peak
-
-  // City-only timezone label ("Asia/Damascus" -> "Damascus").
-  const city = tz.includes("/") ? tz.split("/").pop()!.replace(/_/g, " ") : tz
+  const city = timezoneCity(tz)
 
   // "01:00" today, or "Mon 01:00" when the flip lands on another day.
-  // Compare against the ticking clock (not a fresh Date) so the label stays
-  // consistent with the displayed status even if a tick was missed.
-  const atLabel = () => {
-    const at = transition().at
-    const clock = formatMinutes(utcMinutes(at))
-    return at.toISOString().slice(0, 10) === now().toISOString().slice(0, 10)
-      ? clock
-      : `${DAY_LABELS[at.getUTCDay()]} ${clock}`
-  }
+  const atLabel = () => formatTransitionAt(transition(), now())
 
-  // Minutes until the next flip (the scan aligns to whole minutes).
-  const untilLabel = () => formatDuration(Math.round((transition().at.getTime() - now().getTime()) / MS_MIN))
+  // Minutes until the next flip.
+  const untilLabel = () => formatTransitionIn(transition(), now())
 
   return (
     <box flexShrink={0} paddingTop={1} paddingBottom={1}>
       <text fg={props.theme.text}>
         <b>DeepSeek Pricing</b>
       </text>
-      {/* Status dot, amber when peak, green when off-peak */}
+      {/* Status dot, amber when peak, green when off-peak, with the permanent
+          freeze disclaimer (a view can paint stale data after sleep/stall) */}
       <text fg={peak() ? props.theme.warning : props.theme.success}>
         {"\u25CF"} {peak() ? "PEAK" : "OFF-PEAK"}
+        <span style={{ fg: props.theme.textMuted }}> (can freeze)</span>
       </text>
       <text fg={props.theme.textMuted}>
         UTC {formatMinutes(time())} · {formatMinutes(local())} {city}
@@ -75,6 +63,28 @@ export function PeakPanel(props: PeakPanelProps) {
         const line = props.guardLine?.()
         return line ? <text fg={props.theme.textMuted}>{line}</text> : null
       })()}
+      <text fg={props.theme.textMuted}>edit: /dspeak · v{PLUGIN_VERSION}</text>
+    </box>
+  )
+}
+
+/**
+ * Compact sidebar block shown when the full panel is toggled off: just the
+ * status dot with its freeze disclaimer plus the /dspeak entry line, so the
+ * basics stay visible without the time/window details.
+ */
+export function PeakPanelMini(props: PeakPanelProps) {
+  const { status } = usePeakStatus(props.ranges, props.runs)
+  const peak = () => status().peak
+
+  return (
+    <box flexShrink={0} paddingTop={1} paddingBottom={1}>
+      {/* Status dot, amber when peak, green when off-peak, with the permanent
+          freeze disclaimer (a view can paint stale data after sleep/stall) */}
+      <text fg={peak() ? props.theme.warning : props.theme.success}>
+        {"\u25CF"} {peak() ? "PEAK" : "OFF-PEAK"}
+        <span style={{ fg: props.theme.textMuted }}> (can freeze)</span>
+      </text>
       <text fg={props.theme.textMuted}>edit: /dspeak · v{PLUGIN_VERSION}</text>
     </box>
   )

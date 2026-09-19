@@ -15,15 +15,22 @@ weekday-based pricing rule can be configured.
 
 ## What you get
 
-- A colored `● PEAK` / `● OFF-PEAK` dot next to the prompt on the home screen.
+- A colored `● PEAK` / `● OFF-PEAK` dot next to the prompt on the home screen,
+  with a permanent `(can freeze)` note: the display can paint stale data
+  after sleep or a timer stall, so treat it as guidance.
 - A sidebar panel in every session showing current status, UTC + local time,
   the next transition across days (e.g. `Next: peak at 01:00 UTC Mon` after a
   Friday evening), and a per-window countdown that respects its weekday
-  pattern.
+  pattern. The panel is on by default and can be collapsed from `/dspeak`
+  to a compact `● PEAK (can freeze)` status line plus the `edit: /dspeak`
+  entry (the home dot always stays on).
 - In-app editing with `/dspeak` — no config file editing. Your windows persist
   across restarts.
 - An optional peak guard that asks for confirmation before DeepSeek prompts
-  go out during peak hours (see `Peak guard` below).
+  go out during peak hours. It's on by default; toggle it from `/dspeak`
+  (see `Peak guard` below).
+- `/dspeak` itself opens with a live status header (peak state, UTC + local
+  time, next switch, windows) computed fresh on open, exactly like the panel.
 
 ## Quick install (from this repo, global)
 
@@ -59,13 +66,13 @@ opencode plugin ~/.config/opencode/ds-peak-warningx -g
 ## Install from npm
 
 ```sh
-opencode plugin ds-peak-warningx@1.3.2 -g    # global, or without -g per project
+opencode plugin ds-peak-warningx@1.4.0 -g    # global, or without -g per project
 ```
 
 Or from inside the opencode TUI:
 
 1. Press `ctrl+p` to open the command palette, type `plugins`, and select it.
-2. Press `shift+i` to install a plugin, type `ds-peak-warningx@1.3.2`, and press enter.
+2. Press `shift+i` to install a plugin, type `ds-peak-warningx@1.4.0`, and press enter.
 3. Press `space` to toggle the scope (local project vs global), then confirm.
 4. Restart opencode.
 
@@ -76,7 +83,7 @@ version you specify. Reinstall with the new version and the force flag, then
 restart opencode:
 
 ```sh
-opencode plugin ds-peak-warningx@1.3.2 -g -f   # keep -g if installed globally
+opencode plugin ds-peak-warningx@1.4.0 -g -f   # keep -g if installed globally
 ```
 
 Check this page or `npm view ds-peak-warningx version` for the latest release.
@@ -92,11 +99,11 @@ Check this page or `npm view ds-peak-warningx version` for the latest release.
 
 ## Peak guard
 
-An opt-in confirmation step before prompts that would go out on a DeepSeek
-model during peak hours (off by default).
+A confirmation step before prompts that would go out on a DeepSeek
+model during peak hours (on by default since 1.4.0).
 
-- Turn it on via `/dspeak` → `Peak guard` → `Enable guard`. The sidebar panel
-  then shows a `Guard:` line with the current state and the last outcome
+- Turn it off via `/dspeak` → `Peak guard` → `Disable guard`. When enabled, the
+  sidebar panel shows a `Guard:` line with the current state and the last outcome
   (e.g. `Guard: block 5m · last sent 02:31`).
 - In `block` mode, sending a DeepSeek prompt during peak opens a confirmation
   dialog: confirm to send, cancel to drop it. In `warn` mode, prompts send
@@ -114,7 +121,7 @@ You can set the windows at install time with the `[spec, options]` tuple in `tui
 
 ```json
 {
-  "plugin": [["ds-peak-warningx@1.3.2", { "ranges": [
+  "plugin": [["ds-peak-warningx@1.4.0", { "ranges": [
     { "start": "01:00", "end": "04:00", "days": [1, 2, 3, 4, 5] },
     { "start": "22:00", "end": "02:00" }
   ] }]]
@@ -126,7 +133,10 @@ You can set the windows at install time with the `[spec, options]` tuple in `tui
   it to those weekdays; omit `days` for an every-day window. Later in-app
   edits via `/dspeak` win and persist.
 - `order` — sidebar slot order (default `150`).
-- `guard` — opt-in prompt guard: `{ "enabled": true, "mode": "block",
+- `panel` — sidebar panel: full details by default; the saved `/dspeak`
+  `Sidebar panel` toggle or `false` here collapses it to a compact status
+  line (status dot, freeze note, edit entry).
+- `guard` — prompt guard: `{ "enabled": true, "mode": "block",
   "cooldownMs": 300000, "providers": ["deepseek"] }`. `mode` is `"block"`
   (ask for confirmation before sending) or `"warn"` (send normally, show a
   warning toast); `cooldownMs: 0` asks on every prompt. In-app `/dspeak`

@@ -35,6 +35,9 @@ export const KV_RANGES_KEY = "ds-peak:ranges"
 /** KV key holding the coverage document (source ranges + derived runs). */
 export const KV_RUNS_KEY = "ds-peak:coverage"
 
+/** KV key where the sidebar-panel visibility flag is persisted. */
+export const KV_PANEL_KEY = "ds-peak:panel"
+
 /** KV key where guard settings are persisted. */
 export const KV_GUARD_KEY = "ds-peak:guard"
 
@@ -63,9 +66,21 @@ export const CLOCK_WATCHDOG_MS = 60_000
  */
 export const CLOCK_EVENT_GATE_MS = 30_000
 
-/** Default peak-guard settings (guard is opt-in and off by default). */
+/** Default peak-guard master switch (guard is on by default; toggle in /dspeak). */
+export const DEFAULT_GUARD_ENABLED = true
+
+/** Default peak-guard settings. */
 export const DEFAULT_GUARD_PROVIDERS: string[] = ["deepseek"]
 export const DEFAULT_GUARD_COOLDOWN_MS = 5 * 60_000
 
 /** How many days ahead the transition scanner looks (covers any weekly gap). */
 export const TRANSITION_SCAN_DAYS = 8
+
+/**
+ * Coerce a persisted/option panel-visibility value: only an actual boolean
+ * wins, anything else (missing KV, wrong type) falls back to the default.
+ * Pure so the sanity suite can pin the precedence contract.
+ */
+export function coercePanelVisible(value: unknown, fallback: boolean): boolean {
+  return typeof value === "boolean" ? value : fallback
+}

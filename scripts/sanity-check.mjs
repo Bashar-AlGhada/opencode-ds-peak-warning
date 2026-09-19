@@ -1,4 +1,4 @@
-import { DEFAULT_RANGES } from "../src/config.ts"
+import { DEFAULT_GUARD_ENABLED, DEFAULT_RANGES, coercePanelVisible } from "../src/config.ts"
 import {
   appliesOnDay,
   beijingDayOfWeek,
@@ -287,6 +287,13 @@ check("tick delay includes buffer", msUntilNextTick(0), 60_000 + CLOCK_ALIGN_BUF
 check("tick mid-minute delay", msUntilNextTick(90_000), 30_000 + CLOCK_ALIGN_BUFFER_MS)
 check("fresh clock not stale", isClockStale(new Date(Date.now() - 10_000)), false)
 check("old clock stale after sleep", isClockStale(new Date(Date.now() - (CLOCK_WATCHDOG_MS + 1_000))), true)
+
+// --- panel visibility: KV toggle wins, anything non-boolean falls back ---
+check("panel KV true wins", coercePanelVisible(true, false), true)
+check("panel KV false wins", coercePanelVisible(false, true), false)
+check("panel missing KV falls back", coercePanelVisible(undefined, true), true)
+check("panel wrong-type KV falls back", coercePanelVisible("shown", true), true)
+check("guard default enabled", DEFAULT_GUARD_ENABLED, true)
 
 // --- guard: DeepSeek-only peak gate with cooldown debounce ---
 import {

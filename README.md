@@ -13,135 +13,122 @@ on weekdays, and **fully off-peak weekends** — evaluated by the Beijing
 calendar day. Every window can carry its own day-of-week pattern, so any
 weekday-based pricing rule can be configured.
 
-## What you get
+## Features
 
-- A colored `● PEAK` / `● OFF-PEAK` dot next to the prompt on the home screen:
-  red at peak, green off-peak, and yellow when off-peak but peak starts within
-  30 minutes. It carries a permanent `(can freeze)` note: the display can
-  paint stale data after sleep or a timer stall, so treat it as guidance.
-- A sidebar panel in every session showing current status, UTC + local time,
-  the next transition across days (e.g. `Next: peak at 01:00 UTC Mon` after a
-  Friday evening), and a per-window countdown that respects its weekday
-  pattern. The panel is on by default and can be collapsed from `/dspeak`
-  to a compact `● PEAK (can freeze)` status line plus the `edit: /dspeak`
-  entry (the home dot always stays on).
-- In-app editing with `/dspeak` — no config file editing. Your windows persist
-  across restarts.
-- An optional peak guard that asks for confirmation before DeepSeek prompts
-  go out during peak hours. It's on by default; toggle it from `/dspeak`
-  (see `Peak guard` below).
-- `/dspeak` itself opens with a live status header (peak state, UTC + local
-  time, next switch, windows) computed fresh on open, exactly like the panel.
+- **Status dot** — colored `● PEAK` / `● OFF-PEAK`: red at peak, green
+  off-peak, yellow when peak starts within 30 minutes. On v1 it sits next to
+  the home prompt; on v2 it lives in the footer status row. The permanent
+  `(can freeze)` note means the display can paint stale data after sleep or
+  a timer stall — treat it as guidance.
+- **Sidebar panel** — current status, UTC + local time, next transition
+  across days, and per-window countdowns. Collapsible to a compact status
+  line from `/dspeak`.
+- **`/dspeak`** — in-app window management (add, remove, reset) with a live
+  status header. Edits persist across restarts. Format: `HH:MM-HH:MM` in UTC,
+  optionally restricted to weekdays (`22:00-02:00`, `06:00-10:00 Mon-Fri`,
+  `14:00-16:00 Sat,Sun`). Days are Beijing calendar days; wrapping midnight
+  is fine.
+- **Peak guard** (on by default) — asks for confirmation before DeepSeek
+  prompts go out during peak. `block` mode holds the prompt until confirmed;
+  `warn` mode just toasts. One confirmation silences it for the cooldown
+  (default 5 minutes, `0` = ask every time). `/dspeak-confirm` pre-confirms
+  up front. Slash commands, shell mode, and typing are never blocked.
 
-## Quick install (from this repo, global)
+## opencode v1 (requires `>=1.18.29`)
 
-1. Clone this repository somewhere permanent (e.g. into your global config dir)
-   and install its dependencies:
+### Install
 
-   ```sh
-   git clone https://github.com/Bashar-AlGhada/opencode-ds-peak-warning ~/.config/opencode/ds-peak-warningx
-   cd ~/.config/opencode/ds-peak-warningx
-   npm install
-   ```
-
-2. Add the plugin to your global TUI config `~/.config/opencode/tui.json`:
-
-   ```json
-   {
-     "$schema": "https://opencode.ai/tui.json",
-     "plugin": ["./ds-peak-warningx/src/index.tsx"]
-   }
-   ```
-
-   The path is relative to the config file itself (`~/.config/opencode/`), so the
-   panel now shows in **every** project.
-
-3. Restart opencode.
-
-Or use the CLI instead of step 2:
+From this repo (global):
 
 ```sh
-opencode plugin ~/.config/opencode/ds-peak-warningx -g
+git clone https://github.com/Bashar-AlGhada/opencode-ds-peak-warning ~/.config/opencode/ds-peak-warningx
+cd ~/.config/opencode/ds-peak-warningx
+npm install
 ```
 
-## Install from npm
-
-```sh
-opencode plugin ds-peak-warningx@1.4.0 -g    # global, or without -g per project
-```
-
-Or from inside the opencode TUI:
-
-1. Press `ctrl+p` to open the command palette, type `plugins`, and select it.
-2. Press `shift+i` to install a plugin, type `ds-peak-warningx@1.4.0`, and press enter.
-3. Press `space` to toggle the scope (local project vs global), then confirm.
-4. Restart opencode.
-
-## Updating
-
-Installed plugins don't upgrade automatically — installs are pinned to the
-version you specify. Reinstall with the new version and the force flag, then
-restart opencode:
-
-```sh
-opencode plugin ds-peak-warningx@1.4.0 -g -f   # keep -g if installed globally
-```
-
-Check this page or `npm view ds-peak-warningx version` for the latest release.
-
-## Usage
-
-- The sidebar panel shows `UTC` time, your local time + timezone, and the next
-  status change (e.g. `Next: off-peak at 04:00 UTC`).
-- Press `/` and run `dspeak` to add, remove, or reset peak windows.
-  Format: `HH:MM-HH:MM` in UTC, optionally restricted to weekdays:
-  `22:00-02:00`, `06:00-10:00 Mon-Fri`, `14:00-16:00 Sat,Sun`, `20:00-21:00 Wed`.
-  Days refer to the Beijing calendar day (wrapping midnight is fine).
-
-## Peak guard
-
-A confirmation step before prompts that would go out on a DeepSeek
-model during peak hours (on by default since 1.4.0).
-
-- Turn it off via `/dspeak` → `Peak guard` → `Disable guard`. When enabled, the
-  sidebar panel shows a `Guard:` line with the current state and the last outcome
-  (e.g. `Guard: block 5m · last sent 02:31`).
-- In `block` mode, sending a DeepSeek prompt during peak opens a confirmation
-  dialog: confirm to send, cancel to drop it. In `warn` mode, prompts send
-  normally and you just get a warning toast.
-- One confirmation silences the guard for the cooldown (default 5 minutes;
-  `0` means ask on every prompt). Change it under `Peak guard` → `Cooldown`.
-- Run `/dspeak-confirm` any time to confirm up front and start the cooldown
-  without waiting for a prompt.
-- Slash commands (`/sessions`, `/models`, …), shell mode, and typing are never
-  blocked — only the DeepSeek request itself asks for confirmation.
-
-## Options
-
-You can set the windows at install time with the `[spec, options]` tuple in `tui.json`:
+Then add it to `~/.config/opencode/tui.json` (path relative to the config file):
 
 ```json
 {
-  "plugin": [["ds-peak-warningx@1.4.0", { "ranges": [
+  "$schema": "https://opencode.ai/tui.json",
+  "plugin": ["./ds-peak-warningx/src/index.tsx"]
+}
+```
+
+Or via CLI: `opencode plugin ~/.config/opencode/ds-peak-warningx -g`.
+Restart opencode.
+
+From npm:
+
+```sh
+opencode plugin ds-peak-warningx@1.5.0 -g    # drop -g for per-project
+```
+
+(Or in-TUI: `ctrl+p` → `plugins` → `shift+i`, type `ds-peak-warningx@1.5.0`.)
+
+### Updating
+
+```sh
+opencode plugin ds-peak-warningx@1.5.0 -g -f   # keep -g if installed globally
+```
+
+Then restart opencode. Check `npm view ds-peak-warningx version` for the latest.
+
+### Options (`tui.json`)
+
+```json
+{
+  "plugin": [["ds-peak-warningx@1.5.0", { "ranges": [
     { "start": "01:00", "end": "04:00", "days": [1, 2, 3, 4, 5] },
     { "start": "22:00", "end": "02:00" }
   ] }]]
 }
 ```
 
-- `ranges` — peak windows overriding the defaults. Each window may carry a
-  `days` array (0 = Sunday … 6 = Saturday, Beijing calendar day) restricting
-  it to those weekdays; omit `days` for an every-day window. Later in-app
-  edits via `/dspeak` win and persist.
+- `ranges` — peak windows overriding the defaults. `days` is 0 = Sunday …
+  6 = Saturday (Beijing day); omit for every-day windows. In-app `/dspeak`
+  edits win and persist.
 - `order` — sidebar slot order (default `150`).
-- `panel` — sidebar panel: full details by default; the saved `/dspeak`
-  `Sidebar panel` toggle or `false` here collapses it to a compact status
-  line (status dot, freeze note, edit entry).
-- `guard` — prompt guard: `{ "enabled": true, "mode": "block",
-  "cooldownMs": 300000, "providers": ["deepseek"] }`. `mode` is `"block"`
-  (ask for confirmation before sending) or `"warn"` (send normally, show a
-  warning toast); `cooldownMs: 0` asks on every prompt. In-app `/dspeak`
-  guard edits win and persist.
+- `panel` — `false` (or the `/dspeak` toggle) collapses the panel to a
+  compact status line.
+- `guard` — `{ "enabled": true, "mode": "block", "cooldownMs": 300000,
+  "providers": ["deepseek"] }`.
+
+## opencode v2
+
+Same package, same features — one `./tui` entry serves both generations.
+Differences: the status dot lives in the footer status row, and settings
+persist in v2 durable storage (v1 state does **not** carry over — v2 starts
+once from options/defaults, then `/dspeak` edits persist).
+
+### Install
+
+In `cli.json` (from npm):
+
+```json
+{
+  "plugins": [{ "package": "ds-peak-warningx@1.5.0", "options": { "panel": true } }]
+}
+```
+
+Local checkout (point at the repo root):
+
+```json
+{
+  "plugins": ["file:///path/to/opencode-ds-peak-warning"]
+}
+```
+
+Restart opencode.
+
+### Updating
+
+Bump the pinned version in `cli.json` (or `git pull` a local checkout),
+then restart opencode.
+
+### Options (`cli.json`)
+
+Same options as v1 (`ranges`, `panel`, `guard`); `order` is v1-only.
 
 ## Development
 

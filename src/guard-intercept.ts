@@ -235,9 +235,21 @@ export function resolvePromptModel(
 
 type AnyFn = (...args: any[]) => Promise<unknown>
 
-function readSession(api: TuiPluginApi): any {
+/**
+ * Minimal host surface the prompt guard needs: a client object carrying the
+ * session sender plus an optional dispose hook. Both the v1 `TuiPluginApi`
+ * and the v2 CLI context satisfy this structurally, so one wrapper serves
+ * both generations (v2 passes `{ client: context.client }` and disposes via
+ * the cleanup function returned from `setup`).
+ */
+export interface PromptGuardHost {
+  client?: { session?: unknown }
+  lifecycle?: { onDispose: (fn: () => void) => unknown }
+}
+
+function readSession(host: PromptGuardHost): any {
   try {
-    return (api as unknown as { client?: { session?: unknown } })?.client?.session
+    return host?.client?.session
   } catch {
     return undefined
   }
@@ -247,7 +259,7 @@ function readSession(api: TuiPluginApi): any {
  * Wrap `session.prompt` / `session.promptAsync`. Never touches `command`,
  * `shell`, or anything else, so control-plane actions always work.
  */
-export function installPromptGuard(api: TuiPluginApi, deps: PromptGuardDeps): PromptGuardHandle {
+export function installPromptGuard(host: PromptGuardHost, deps: PromptGuardDeps): PromptGuardHandle {
   let origPrompt: AnyFn | undefined
   let origPromptAsync: AnyFn | undefined
   let hadOwnPrompt = false
@@ -371,7 +383,7 @@ export function installPromptGuard(api: TuiPluginApi, deps: PromptGuardDeps): Pr
     }
 
   const patch = (): boolean => {
-    const session = readSession(api)
+    const session = readSession(host)
     if (!session || typeof session.prompt !== "function") return false
     if ((session.prompt as Record<string, unknown>)[MARK] === true) {
       target = session
@@ -406,13 +418,13 @@ export function installPromptGuard(api: TuiPluginApi, deps: PromptGuardDeps): Pr
     if (disposed) return
     let session: any
     try {
-      session = readSession(api)
+      session = readSession(host)
     } catch {
       session = undefined
     }
     if (session && target && session === target && (session.prompt as Record<string, unknown>)?.[MARK] === true) {
       if (!state.installed) setState(true, "ok")
-      return // still patched (covers api.client rotation to the same object)
+      return // still patched (covers host.client rotation to the same object)
     }
     if (session && session !== target) {
       // Client rotated: restore the old target if we still can, then patch new.
@@ -482,7 +494,7 @@ export function installPromptGuard(api: TuiPluginApi, deps: PromptGuardDeps): Pr
     // unref unavailable on this runtime; cleared on dispose regardless
   }
   try {
-    api.lifecycle.onDispose(uninstall)
+    host.lifecycle?.onDispose(uninstall)
   } catch {
     // lifecycle unavailable; interval + explicit uninstall still work
   }

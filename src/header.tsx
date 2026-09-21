@@ -1,12 +1,12 @@
 /** @jsxImportSource @opentui/solid */
-import type { TuiThemeCurrent } from "@opencode-ai/plugin/tui"
 import { formatDays, formatMinutes } from "./ranges.ts"
 import type { PeakRun } from "./ranges.ts"
 import type { TimeRange } from "./types.ts"
 import { formatTransitionAt, formatTransitionIn, statusTone, timezoneCity, toneColor, usePeakStatus } from "./status.ts"
+import type { PeakThemeColors } from "./status.ts"
 
 export interface PeakDialogHeaderProps {
-  theme: () => TuiThemeCurrent
+  theme: () => PeakThemeColors
   ranges: () => TimeRange[]
   /** Prebuilt coverage array; hot status reads use it when provided. */
   runs?: () => PeakRun[]

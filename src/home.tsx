@@ -1,11 +1,11 @@
 /** @jsxImportSource @opentui/solid */
-import type { TuiThemeCurrent } from "@opencode-ai/plugin/tui"
 import type { TimeRange } from "./types.ts"
 import type { PeakRun } from "./ranges.ts"
 import { statusTone, toneColor, usePeakStatus } from "./status.ts"
+import type { PeakThemeColors } from "./status.ts"
 
 export interface PeakHomeIndicatorProps {
-  theme: TuiThemeCurrent
+  theme: PeakThemeColors
   ranges: () => TimeRange[]
   /** Prebuilt coverage array; hot status reads use it when provided. */
   runs?: () => PeakRun[]

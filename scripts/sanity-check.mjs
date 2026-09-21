@@ -879,24 +879,143 @@ check("epoch maps to Thu 08:00 Beijing", beijingWeekMinute(d("1970-01-01T00:00:0
 }
 check("local display follows the clock (UTC)", localMinutes(d("2026-08-26T02:30:00Z"), "UTC"), 150)
 
-// --- every relative import in src/ must resolve to an existing file ---
+// --- every relative import in src/ (plus the root v2 entry) must resolve ---
 // Guards against broken specifiers (e.g. ".ts" pointing at a ".tsx" file),
 // which fail silently at plugin load time in opencode.
 import { existsSync, readdirSync, readFileSync } from "node:fs"
 import { dirname, join } from "node:path"
-const srcDir = new URL("../src", import.meta.url).pathname.replace(/^\/([A-Za-z]:)/, "$1")
+const repoDir = join(dirname(new URL(import.meta.url).pathname.replace(/^\/([A-Za-z]:)/, "$1")), "..")
+const srcDir = join(repoDir, "src")
 let importChecks = 0
-for (const file of readdirSync(srcDir)) {
-  if (!/\.(ts|tsx)$/.test(file)) continue
-  const text = readFileSync(join(srcDir, file), "utf8")
+const checkImportsOf = (dir, file) => {
+  const text = readFileSync(join(dir, file), "utf8")
   const specs = [...text.matchAll(/(?:from|import)\s*["'](\.[^"']+)["']/g)].map((m) => m[1])
   for (const spec of specs) {
     importChecks++
-    const target = join(dirname(join(srcDir, file)), spec)
+    const target = join(dirname(join(dir, file)), spec)
     check(`import resolves: ${file} -> ${spec}`, existsSync(target) ? "ok" : "missing", "ok")
   }
 }
+for (const file of readdirSync(srcDir)) {
+  if (!/\.(ts|tsx)$/.test(file)) continue
+  checkImportsOf(srcDir, file)
+}
+for (const file of readdirSync(join(srcDir, "v2"))) {
+  if (!/\.(ts|tsx)$/.test(file)) continue
+  checkImportsOf(srcDir, `v2/${file}`)
+}
+// Root entrypoints (v2 directory installs resolve `<dir>/tui`, not exports).
+for (const rootEntry of ["tui.ts"]) {
+  check(`root entry exists: ${rootEntry}`, existsSync(join(repoDir, rootEntry)) ? "ok" : "missing", "ok")
+  checkImportsOf(repoDir, rootEntry)
+}
 console.log(`     (${importChecks} relative imports checked)`)
+
+// --- v2 directory entry re-exports the dual module (not a fork) ---
+{
+  const rootTui = readFileSync(join(repoDir, "tui.ts"), "utf8")
+  check("root tui.ts re-exports src/index.tsx", rootTui.includes("./src/index.tsx"), true)
+}
+
+// --- v2 storage keys must satisfy the host segment rule ---
+// The TUI storage provider validates every path segment with
+// /^[a-zA-Z0-9][a-zA-Z0-9._-]*$/ (no colons/slashes) and throws
+// `Invalid storage segment` at setup time otherwise.
+{
+  const kvSrc = readFileSync(join(srcDir, "v2", "kv.ts"), "utf8")
+  const keys = [...kvSrc.matchAll(/storage\.store(?:<[^>]+>)?\(\s*"([^"]+)"/g)].map((m) => m[1])
+  check("v2 store keys found", keys.length > 0, true)
+  for (const key of keys) {
+    check(
+      `v2 store key valid segment: ${key}`,
+      /^[a-zA-Z0-9][a-zA-Z0-9._-]*$/.test(key) && key !== "." && key !== "..",
+      true,
+    )
+  }
+}
+
+// --- v2 /dspeak main menu parity with v1 ---
+// The v2 promise dialog.select() has no header slot, so the main menu round
+// must go through dialog.show() with the SHARED PeakDialogHeader (live
+// colored status dot, UTC + local, next switch with countdown, windows
+// line) above a native keyboard-driven <select>. Leaf submenus stay
+// promise-based, matching v1's host-dialog leaves.
+{
+  const menuSrc = readFileSync(join(srcDir, "v2", "menu.tsx"), "utf8")
+  const dialogsSrc = readFileSync(join(srcDir, "v2", "dialogs.tsx"), "utf8")
+  const setupSrc = readFileSync(join(srcDir, "v2", "tui-v2.ts"), "utf8")
+  check("v2 menu reuses shared dialog header", menuSrc.includes("PeakDialogHeader"), true)
+  check("v2 menu uses native select list", /<select[\s>]/.test(menuSrc), true)
+  check("v2 select has explicit height (auto collapses to 0 rows)", /<select[\s\S]*?height=\{props\.items\.length/.test(menuSrc), true)
+  check("v2 menu grabs list focus on open", menuSrc.includes("focused") && menuSrc.includes("onMount"), true)
+  check("v2 menu handles escape explicitly", menuSrc.includes('"escape"'), true)
+  check("v2 main round uses dialog.show", dialogsSrc.includes("ctx.dialog.show("), true)
+  check("v2 main options carry descriptions", dialogsSrc.includes('description: "Block or warn on prompts'), true)
+  check("v2 menu ctx threads theme", dialogsSrc.includes("theme: () => PeakThemeColors"), true)
+  check("v2 setup adapts theme for menu", setupSrc.includes("adaptV2Theme(context.theme)"), true)
+}
+
+// --- v2 command layer must register from a component render ---
+// context.keymap.layer() is owned by the calling component: a setup()-level
+// call stays ownerless (no keymap provider above setup) and the commands
+// never become reachable — no palette entries, no slash completion. The
+// layer must be registered from an `append: "app"` slot render (same as the
+// host's built-in diff viewer), never from setup().
+{
+  const slotsSrc = readFileSync(join(srcDir, "v2", "slots.tsx"), "utf8")
+  const setupSrc = readFileSync(join(srcDir, "v2", "tui-v2.ts"), "utf8")
+  check("v2 app-slot claim exists", slotsSrc.includes('append: "app"'), true)
+  check("v2 layer registers from slot render", slotsSrc.includes("registerV2Commands"), true)
+  check("v2 layer NOT registered from setup", !setupSrc.includes("registerV2Commands"), true)
+}
+// --- v2 dual export: one module serves v1 ({id,tui}) and v2 ({id,setup}) ---
+// Static text checks (no runtime import: index pulls .tsx, which strip-types
+// cannot execute). Both generations must agree on the plugin id.
+{
+  const indexSrc = readFileSync(join(srcDir, "index.tsx"), "utf8")
+  const tuiSrc = readFileSync(join(srcDir, "tui.tsx"), "utf8")
+  const v2Src = readFileSync(join(srcDir, "v2", "tui-v2.ts"), "utf8")
+  check("dual export exposes tui (v1)", /tui:\s*tuiModule\.tui/.test(indexSrc), true)
+  check("dual export spreads v2 definition", /\.\.\.v2plugin/.test(indexSrc), true)
+  check("dual export satisfies v1 module shape", /satisfies TuiPluginModule/.test(indexSrc), true)
+  check("v2 definition pins v2 contract", /satisfies Definition/.test(v2Src), true)
+  const v1Id = tuiSrc.match(/id:\s*"([^"]+)"/)?.[1]
+  const v2Id = v2Src.match(/PLUGIN_ID\s*=\s*"([^"]+)"/)?.[1]
+  check("v1 module id present", typeof v1Id, "string")
+  check("v2 PLUGIN_ID present", typeof v2Id, "string")
+  check("v1/v2 plugin ids match", v1Id, v2Id)
+}
+
+// --- v2 clock fan-in covers the whole v2 OpenCodeEvent union ---
+// Same both-directions enforcement as the v1 SDK pin, but resolved through
+// the V2Event union members (each member's first `type: "..."` literal).
+// V2EventRpc is a template (`rpc.${string}`) — not subscribable, excluded.
+{
+  const { V2_EVENT_TYPES } = await import("../src/v2/events.ts")
+  // @opencode/client is a transitive dep of @opencode/plugin: top-level when
+  // hoisted, nested otherwise. Resolve whichever exists.
+  const scriptsDir = dirname(new URL(import.meta.url).pathname.replace(/^\/([A-Za-z]:)/, "$1"))
+  const v2ClientGen = ["@opencode", "client", "dist", "promise", "generated", "types.d.ts"]
+  const topLevel = join(scriptsDir, "..", "node_modules", ...v2ClientGen)
+  const nested = join(scriptsDir, "..", "node_modules", "@opencode", "plugin", "node_modules", ...v2ClientGen)
+  const clientTypes = readFileSync(existsSync(topLevel) ? topLevel : nested, "utf8")
+  const unionDecl = clientTypes.match(/export type V2Event = ([^;]+);/)
+  const members = unionDecl ? unionDecl[1].split("|").map((s) => s.trim()).filter(Boolean) : []
+  check("v2 union members found", members.length > 80, true)
+  const busEvents = new Set()
+  for (const name of members) {
+    if (name === "V2EventRpc") continue // template literal type, not subscribable
+    const idx = clientTypes.indexOf(`export type ${name} = {`)
+    if (idx < 0) continue
+    const m = clientTypes.slice(idx, idx + 3000).match(/\btype: "([^"]+)"/)
+    if (m) busEvents.add(m[1])
+  }
+  const missing = [...busEvents].filter((t) => !V2_EVENT_TYPES.includes(t))
+  const extra = V2_EVENT_TYPES.filter((t) => !busEvents.has(t))
+  check("v2 watchdog covers every client event type", missing, [])
+  check("v2 watchdog subscribes to real event types only", extra, [])
+  check("v2 event tiers have no duplicates", new Set(V2_EVENT_TYPES).size, V2_EVENT_TYPES.length)
+}
 
 console.log(failures === 0 ? "\nAll sanity checks passed." : `\n${failures} check(s) failed.`)
 process.exit(failures === 0 ? 0 : 1)

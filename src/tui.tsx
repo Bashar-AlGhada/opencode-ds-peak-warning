@@ -1,8 +1,7 @@
 /** @jsxImportSource @opentui/solid */
 import { createSignal, Show } from "solid-js"
-import type { TuiPlugin, TuiPluginApi, TuiPluginModule } from "@opencode-ai/plugin/tui"
+import type { TuiPlugin, TuiPluginModule } from "@opencode-ai/plugin/tui"
 import {
-  coerceCoverageDoc,
   makeCoverageDoc,
   migrateLegacyRanges,
   sanitizeRanges,
@@ -15,22 +14,15 @@ import {
   poke,
 } from "./clock.ts"
 import {
-  DEFAULT_GUARD_COOLDOWN_MS,
-  DEFAULT_GUARD_ENABLED,
-  DEFAULT_GUARD_PROVIDERS,
-  DEFAULT_RANGES,
   DEFAULT_SLOT_ORDER,
   KV_GUARD_ACK_KEY,
   KV_GUARD_KEY,
   KV_PANEL_KEY,
-  KV_RANGES_KEY,
-  KV_RUNS_KEY,
   WEEKDAY_DEFAULT_DAYS,
-  coercePanelVisible,
 } from "./config.ts"
 import type { DsPeakOptions, GuardSettings, TimeRange } from "./types.ts"
-import { sanitizeGuardSettings } from "./guard.ts"
 import { formatCooldown } from "./guard.ts"
+import { loadCoverage, loadGuard, loadLastAck, loadPanelVisible, persistCoverage } from "./state.ts"
 import { formatLastActivity, installPromptGuard, type GuardActivity } from "./guard-intercept.ts"
 import { parseConfigModel } from "./guard.ts"
 import { openConfigMenu } from "./dialogs.tsx"
@@ -38,120 +30,20 @@ import { showPeakConfirmDialog } from "./guard-ui.tsx"
 import { PeakPanel, PeakPanelMini } from "./panel.tsx"
 import { PeakHomeIndicator } from "./home.tsx"
 
-/**
- * Resolve the effective peak windows. Each entry may carry a day-of-week
- * pattern. Precedence: saved KV value > plugin `ranges` option > built-in
- * weekday defaults.
- */
-function resolveEffectiveRanges(api: TuiPluginApi, opts: Partial<DsPeakOptions>): TimeRange[] {
-  try {
-    // Prefer what the user last saved through /dspeak (day patterns included).
-    const fromKv = api.kv.get<unknown>(KV_RANGES_KEY)
-    if (Array.isArray(fromKv)) {
-      const cleaned = sanitizeRanges(fromKv)
-      if (cleaned.length) return migrateLegacyRanges(cleaned, WEEKDAY_DEFAULT_DAYS)
-    }
-  } catch {
-    // ignore kv read errors, fall through
-  }
-  const fromOpts = opts.ranges
-  if (Array.isArray(fromOpts) && fromOpts.length) {
-    const cleaned = sanitizeRanges(fromOpts)
-    if (cleaned.length) return migrateLegacyRanges(cleaned, WEEKDAY_DEFAULT_DAYS)
-  }
-  return DEFAULT_RANGES.map((r) => ({ ...r, days: r.days ? [...r.days] : undefined }))
-}
-
-/**
- * Load the coverage document: a valid persisted doc is trusted (fingerprint
- * verified inside coerceCoverageDoc); anything else rebuilds the merged array
- * from the effective ranges. The caller saves forward when rebuilt.
- */
-function loadCoverage(api: TuiPluginApi, opts: Partial<DsPeakOptions>): { doc: CoverageDoc; rebuilt: boolean } {
-  try {
-    const fromKv = api.kv.get<unknown>(KV_RUNS_KEY)
-    const doc = coerceCoverageDoc(fromKv)
-    if (doc) return { doc, rebuilt: false }
-  } catch {
-    // ignore kv read errors, rebuild below
-  }
-  return { doc: makeCoverageDoc(resolveEffectiveRanges(api, opts)), rebuilt: true }
-}
-
-/** Persist both the coverage doc and the legacy plain-array key (rollback safety). */
-function persistCoverage(api: TuiPluginApi, doc: CoverageDoc): void {
-  try {
-    api.kv.set(KV_RUNS_KEY, doc)
-  } catch {
-    // kv may be unavailable; keep in-memory state
-  }
-  try {
-    api.kv.set(KV_RANGES_KEY, doc.ranges)
-  } catch {
-    // kv may be unavailable; keep in-memory state
-  }
-}
-
-function defaultGuard(): GuardSettings {
-  return {
-    enabled: DEFAULT_GUARD_ENABLED,
-    mode: "block",
-    cooldownMs: DEFAULT_GUARD_COOLDOWN_MS,
-    providers: [...DEFAULT_GUARD_PROVIDERS],
-  }
-}
-
-/** Precedence: saved KV value > plugin `guard` option > defaults (guard on). */
-function loadGuard(api: TuiPluginApi, opts: Partial<DsPeakOptions>): GuardSettings {
-  const fallback = sanitizeGuardSettings(opts.guard, defaultGuard())
-  try {
-    const fromKv = api.kv.get<unknown>(KV_GUARD_KEY)
-    if (fromKv && typeof fromKv === "object") return sanitizeGuardSettings(fromKv, fallback)
-  } catch {
-    // ignore kv read errors
-  }
-  return fallback
-}
-
-function loadLastAck(api: TuiPluginApi): number {
-  try {
-    const v = api.kv.get<unknown>(KV_GUARD_ACK_KEY)
-    if (typeof v === "number" && Number.isFinite(v) && v > 0) return Math.floor(v)
-  } catch {
-    // ignore kv read errors
-  }
-  return 0
-}
-
-/**
- * Sidebar panel visibility. Precedence: saved KV toggle > plugin `panel`
- * option > visible. A non-boolean KV entry (missing key, wrong type) falls
- * through to the option/default instead of hiding the panel.
- */
-function loadPanelVisible(api: TuiPluginApi, opts: Partial<DsPeakOptions>): boolean {
-  const fallback = typeof opts.panel === "boolean" ? opts.panel : true
-  try {
-    return coercePanelVisible(api.kv.get<unknown>(KV_PANEL_KEY), fallback)
-  } catch {
-    // ignore kv read errors
-  }
-  return fallback
-}
-
 const tui: TuiPlugin = async (api, options) => {
   const opts = (options ?? {}) as Partial<DsPeakOptions>
   ensureClockRunning()
-  const initial = loadCoverage(api, opts)
-  if (initial.rebuilt) persistCoverage(api, initial.doc)
+  const initial = loadCoverage(api.kv, opts)
+  if (initial.rebuilt) persistCoverage(api.kv, initial.doc)
   // Single choke point for window state: every settings change flows through
   // `save`, which always rebuilds the merged coverage array with it — the
   // array cannot go stale relative to the settings.
   const [coverage, setCoverage] = createSignal<CoverageDoc>(initial.doc)
   const ranges = () => coverage().ranges
   const runs = () => coverage().runs
-  const [guardSettings, setGuardSettings] = createSignal<GuardSettings>(loadGuard(api, opts))
-  const [lastAck, setLastAck] = createSignal<number>(loadLastAck(api))
-  const [panelVisible, setPanelVisible] = createSignal<boolean>(loadPanelVisible(api, opts))
+  const [guardSettings, setGuardSettings] = createSignal<GuardSettings>(loadGuard(api.kv, opts))
+  const [lastAck, setLastAck] = createSignal<number>(loadLastAck(api.kv))
+  const [panelVisible, setPanelVisible] = createSignal<boolean>(loadPanelVisible(api.kv, opts))
   const [activity, setActivity] = createSignal<GuardActivity | null>(null)
   const [guardInstalled, setGuardInstalled] = createSignal(false)
 
@@ -162,7 +54,7 @@ const tui: TuiPlugin = async (api, options) => {
     // An explicitly emptied list means "no peak windows" (not "defaults").
     const doc = makeCoverageDoc(migrateLegacyRanges(sanitizeRanges(next), WEEKDAY_DEFAULT_DAYS))
     setCoverage(doc)
-    persistCoverage(api, doc)
+    persistCoverage(api.kv, doc)
   }
 
   const saveGuard = (next: GuardSettings) => {

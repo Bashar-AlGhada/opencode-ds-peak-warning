@@ -2,6 +2,48 @@
 
 All notable changes to this project will be documented in this file.
 
+## [1.5.0] - 2026-09-21
+
+### Added
+
+- opencode v2 (2.x) support from the same package: the `./tui` entry now
+  exports both contracts (`{ id, tui }` for v1, `{ id, setup }` for v2), so
+  one install works on either generation. The v2 path reuses the shared
+  pricing logic (windows, coverage array, guard decision, clock) against the
+  v2 CLI context: sidebar panel via `sidebar.content`, status dot via
+  `home.footer.status`, `/dspeak` + `/dspeak-confirm` as palette/slash
+  commands (the keymap layer registers from an `append: "app"` slot render,
+  where it has an owning component), durable storage instead of KV, and the
+  prompt guard wrapped around the v2 client's `session.prompt`. The `/dspeak`
+  main menu renders via `dialog.show()` with the same live header as v1
+  above a native keyboard-driven select list with descriptions (explicit
+  row height — the widget has no intrinsic size); leaf submenus stay
+  promise-based, matching v1's host-dialog leaves.
+- v2 watchdog event catalog pinned by the sanity suite against the installed
+  `@opencode/client` generated types (both directions), like the v1 SDK pin.
+- Root `tui.ts` entry re-exporting `src/index.tsx`: v2 resolves local
+  directory specs to `<dir>/tui` (not to `package.json` exports), so without
+  it a `file:///...` checkout entry silently never loads. npm consumers are
+  unaffected (`exports["./tui"]` still points at `src/index.tsx`).
+
+### Changed
+
+- Minimum v1 version is now `>=1.18.29` (dual object-form entrypoints only
+  load there).
+- The status views now consume a minimal theme-color surface shared by both
+  generations (v2 nested `ResolvedTheme` tokens are adapted onto it).
+
+### Notes for v2 testers
+
+- v1 KV state does not carry over to v2 (different storage backend keyed by
+  the v1 host): v2 starts once from options/defaults, then `/dspeak` edits
+  persist going forward.
+- The `order` plugin option is v1-only; v2 composes slots in plugin enable
+  order.
+- The peak guard is ported best-effort: if the v2 TUI send path bypasses the
+  wrapped `session.prompt`, the sidebar shows `Guard: unavailable` instead of
+  silently failing — please report what you see.
+
 ## [1.4.0] - 2026-09-19
 
 ### Added

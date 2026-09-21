@@ -1,5 +1,5 @@
 import { createMemo } from "solid-js"
-import type { TuiThemeCurrent } from "@opencode-ai/plugin/tui"
+import type { RGBA } from "@opentui/core"
 import { clockTick, ensureClockRunning, isClockStale, poke } from "./clock.ts"
 import { DAY_LABELS, MS_MIN } from "./config.ts"
 import {
@@ -62,10 +62,24 @@ export function statusTone(peak: boolean, transition: DateTransition, now: Date)
 }
 
 /** Map a tone to its theme color: peak=error (red), soon=warning (yellow), off=success (green). */
-export function toneColor(theme: TuiThemeCurrent, tone: StatusTone) {
+export function toneColor(theme: PeakThemeColors, tone: StatusTone) {
   if (tone === "peak") return theme.error
   if (tone === "soon") return theme.warning
   return theme.success
+}
+
+/**
+ * Minimal color surface the status views need. The v1 `TuiThemeCurrent`
+ * satisfies this structurally; the v2 adapter (`src/v2/theme.ts`) builds it
+ * from the nested `ResolvedTheme` tokens — so one set of components serves
+ * both generations without either theme type leaking into the views.
+ */
+export interface PeakThemeColors {
+  text: RGBA
+  textMuted: RGBA
+  error: RGBA
+  warning: RGBA
+  success: RGBA
 }
 
 // Reactive view state shared by the sidebar panel and the home-screen indicator.

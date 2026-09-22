@@ -22,7 +22,7 @@ import {
 } from "./config.ts"
 import type { DsPeakOptions, GuardSettings, TimeRange } from "./types.ts"
 import { formatCooldown } from "./guard.ts"
-import { DEFAULT_STATUS_PROVIDERS, statusProviderMatches } from "./provider.ts"
+import { resolveStatusProviders, statusProviderMatches } from "./provider.ts"
 import { loadCoverage, loadGuard, loadLastAck, loadPanelVisible, persistCoverage } from "./state.ts"
 import { formatLastActivity, installPromptGuard, type GuardActivity } from "./guard-intercept.ts"
 import { parseConfigModel } from "./guard.ts"
@@ -47,9 +47,7 @@ const tui: TuiPlugin = async (api, options) => {
   const [panelVisible, setPanelVisible] = createSignal<boolean>(loadPanelVisible(api.kv, opts))
   const [activity, setActivity] = createSignal<GuardActivity | null>(null)
   const [guardInstalled, setGuardInstalled] = createSignal(false)
-  const statusProviders = Array.isArray(opts.statusProviders)
-    ? opts.statusProviders.filter((provider): provider is string => typeof provider === "string")
-    : DEFAULT_STATUS_PROVIDERS
+  const statusProviders = resolveStatusProviders(opts.statusProviders)
   const [modelRefresh, setModelRefresh] = createSignal(0)
 
   // Update in-memory state and persist to KV so edits survive restarts.

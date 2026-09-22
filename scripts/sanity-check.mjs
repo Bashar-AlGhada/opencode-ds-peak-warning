@@ -1,5 +1,5 @@
 import { DEFAULT_GUARD_ENABLED, DEFAULT_RANGES, coercePanelVisible } from "../src/config.ts"
-import { DEFAULT_STATUS_PROVIDERS, statusProviderMatches } from "../src/provider.ts"
+import { DEFAULT_STATUS_PROVIDERS, resolveStatusProviders, statusProviderMatches } from "../src/provider.ts"
 import {
   appliesOnDay,
   beijingDayOfWeek,
@@ -302,6 +302,9 @@ check("status matches DeepSeek provider", statusProviderMatches("deepseek", "dee
 check("status matches DeepSeek model", statusProviderMatches("opencode", "deepseek-chat"), true)
 check("status skips OpenAI Astra", statusProviderMatches("openai", "gpt-6.0-codex"), false)
 check("empty status providers match all", statusProviderMatches("openai", "gpt-6.0-codex", []), true)
+check("missing status providers use default", resolveStatusProviders(undefined), ["deepseek"])
+check("empty status providers remain opt-in all", resolveStatusProviders([]), [])
+check("invalid status providers use default", resolveStatusProviders([42, ""]), ["deepseek"])
 
 // --- status tone: red peak, green off-peak, yellow when peak < 30 min away ---
 const toneNow = d("2026-08-26T02:00:00Z") // Wed, inside the 01:00-04:00 UTC window

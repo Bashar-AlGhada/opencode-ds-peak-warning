@@ -7,7 +7,9 @@ export function resolveStatusProviders(value: unknown): string[] {
   if (!Array.isArray(value)) return DEFAULT_STATUS_PROVIDERS
   if (value.length === 0) return []
 
-  const providers = value.filter((provider): provider is string => typeof provider === "string" && provider.trim().length > 0)
+  const providers = value
+    .filter((provider): provider is string => typeof provider === "string" && provider.trim().length > 0)
+    .map((provider) => provider.trim())
   return providers.length > 0 ? providers : DEFAULT_STATUS_PROVIDERS
 }
 

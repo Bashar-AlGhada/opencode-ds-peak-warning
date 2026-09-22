@@ -305,6 +305,7 @@ check("empty status providers match all", statusProviderMatches("openai", "gpt-6
 check("missing status providers use default", resolveStatusProviders(undefined), ["deepseek"])
 check("empty status providers remain opt-in all", resolveStatusProviders([]), [])
 check("invalid status providers use default", resolveStatusProviders([42, ""]), ["deepseek"])
+check("status providers trim whitespace", resolveStatusProviders([" deepseek "]), ["deepseek"])
 
 // --- status tone: red peak, green off-peak, yellow when peak < 30 min away ---
 const toneNow = d("2026-08-26T02:00:00Z") // Wed, inside the 01:00-04:00 UTC window

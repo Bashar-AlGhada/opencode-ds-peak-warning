@@ -1,4 +1,5 @@
 import { DEFAULT_GUARD_ENABLED, DEFAULT_RANGES, coercePanelVisible } from "../src/config.ts"
+import { DEFAULT_STATUS_PROVIDERS, statusProviderMatches } from "../src/provider.ts"
 import {
   appliesOnDay,
   beijingDayOfWeek,
@@ -294,6 +295,13 @@ check("panel KV false wins", coercePanelVisible(false, true), false)
 check("panel missing KV falls back", coercePanelVisible(undefined, true), true)
 check("panel wrong-type KV falls back", coercePanelVisible("shown", true), true)
 check("guard default enabled", DEFAULT_GUARD_ENABLED, true)
+
+// --- model-aware status display ---
+check("status defaults to DeepSeek", DEFAULT_STATUS_PROVIDERS, ["deepseek"])
+check("status matches DeepSeek provider", statusProviderMatches("deepseek", "deepseek-chat"), true)
+check("status matches DeepSeek model", statusProviderMatches("opencode", "deepseek-chat"), true)
+check("status skips OpenAI Astra", statusProviderMatches("openai", "gpt-6.0-codex"), false)
+check("empty status providers match all", statusProviderMatches("openai", "gpt-6.0-codex", []), true)
 
 // --- status tone: red peak, green off-peak, yellow when peak < 30 min away ---
 const toneNow = d("2026-08-26T02:00:00Z") // Wed, inside the 01:00-04:00 UTC window

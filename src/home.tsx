@@ -9,10 +9,13 @@ export interface PeakHomeIndicatorProps {
   ranges: () => TimeRange[]
   /** Prebuilt coverage array; hot status reads use it when provided. */
   runs?: () => PeakRun[]
+  /** Whether the selected/default model uses these pricing windows. */
+  visible?: () => boolean
 }
 
 /** Minimal landing-screen indicator: colored dot + PEAK/OFF-PEAK label. */
 export function PeakHomeIndicator(props: PeakHomeIndicatorProps) {
+  if (props.visible && !props.visible()) return null
   const { now, status, transition } = usePeakStatus(props.ranges, props.runs)
   const peak = () => status().peak
   // Red while peak, green off-peak, yellow when peak starts within 30 min.

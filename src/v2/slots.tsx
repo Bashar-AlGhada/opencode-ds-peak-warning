@@ -13,6 +13,7 @@ export interface V2SlotState {
   ranges: () => TimeRange[]
   runs: () => PeakRun[]
   panelVisible: () => boolean
+  statusVisible: (sessionID?: string) => boolean
   guardLine: () => string | null
   commands: {
     configure: () => Promise<void>
@@ -39,17 +40,19 @@ export function registerV2Slots(context: Context, state: V2SlotState): () => voi
     claim(
       context.ui.slot({
         append: "sidebar.content",
-        render: () => (
-          <Show
-            when={state.panelVisible()}
-            fallback={<PeakPanelMini theme={adaptV2Theme(context.theme)} ranges={state.ranges} runs={state.runs} />}
-          >
-            <PeakPanel
-              theme={adaptV2Theme(context.theme)}
-              ranges={state.ranges}
-              runs={state.runs}
-              guardLine={state.guardLine}
-            />
+        render: (input) => (
+          <Show when={state.statusVisible(input.sessionID)}>
+            <Show
+              when={state.panelVisible()}
+              fallback={<PeakPanelMini theme={adaptV2Theme(context.theme)} ranges={state.ranges} runs={state.runs} />}
+            >
+              <PeakPanel
+                theme={adaptV2Theme(context.theme)}
+                ranges={state.ranges}
+                runs={state.runs}
+                guardLine={state.guardLine}
+              />
+            </Show>
           </Show>
         ),
       }),
@@ -67,12 +70,29 @@ export function registerV2Slots(context: Context, state: V2SlotState): () => voi
       context.ui.slot({
         append: "home.footer.status",
         render: () => (
-          <PeakHomeIndicator theme={adaptV2Theme(context.theme)} ranges={state.ranges} runs={state.runs} />
+          <Show when={state.statusVisible()}>
+            <PeakHomeIndicator theme={adaptV2Theme(context.theme)} ranges={state.ranges} runs={state.runs} />
+          </Show>
         ),
       }),
     )
   } catch {
     // footer status unavailable; sidebar panel still works
+  }
+
+  try {
+    claim(
+      context.ui.slot({
+        append: "prompt.footer.status",
+        render: (input) => (
+          <Show when={state.statusVisible(input.sessionID)}>
+            <PeakHomeIndicator theme={adaptV2Theme(context.theme)} ranges={state.ranges} runs={state.runs} />
+          </Show>
+        ),
+      }),
+    )
+  } catch {
+    // prompt footer status unavailable; sidebar and home status still work
   }
 
   // Global command layer: registered from a component render (NOT from

@@ -15,6 +15,9 @@ export interface DsPeakOptions {
   // Sidebar panel visibility; shown unless explicitly disabled. A saved KV
   // value from the /dspeak toggle wins over this option.
   panel?: boolean
+  // Providers/models whose configured pricing windows should be displayed.
+  // Defaults to DeepSeek; an empty list displays the status for every model.
+  statusProviders?: string[]
   // Opt-in peak guard: confirm before prompting on DeepSeek during peak.
   guard?: Partial<GuardSettings>
 }

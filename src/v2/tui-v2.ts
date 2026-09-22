@@ -11,6 +11,7 @@ import {
   WEEKDAY_DEFAULT_DAYS,
 } from "../config.ts"
 import type { DsPeakOptions, GuardSettings, TimeRange } from "../types.ts"
+import { DEFAULT_STATUS_PROVIDERS, statusProviderMatches } from "../provider.ts"
 import { formatCooldown } from "../guard.ts"
 import { loadCoverage, loadGuard, loadLastAck, loadPanelVisible, persistCoverage } from "../state.ts"
 import { formatLastActivity, installPromptGuard, type GuardActivity } from "../guard-intercept.ts"
@@ -52,6 +53,17 @@ async function setupV2(context: Context): Promise<() => void> {
   const [panelVisible, setPanelVisible] = createSignal<boolean>(loadPanelVisible(kv, opts))
   const [activity, setActivity] = createSignal<GuardActivity | null>(null)
   const [guardInstalled, setGuardInstalled] = createSignal(false)
+  const statusProviders = Array.isArray(opts.statusProviders)
+    ? opts.statusProviders.filter((provider): provider is string => typeof provider === "string")
+    : DEFAULT_STATUS_PROVIDERS
+
+  const statusVisible = (sessionID?: string) => {
+    if (!sessionID) return false
+    const model = context.data.session.get(sessionID) as
+      | { model?: { providerID?: string; id?: string } }
+      | undefined
+    return statusProviderMatches(model?.model?.providerID, model?.model?.id, statusProviders)
+  }
 
   const save = (next: TimeRange[]) => {
     // An explicitly emptied list means "no peak windows" (not "defaults").
@@ -206,6 +218,7 @@ async function setupV2(context: Context): Promise<() => void> {
     ranges,
     runs,
     panelVisible,
+    statusVisible,
     guardLine,
     commands: { configure, confirmPeak },
   })

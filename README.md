@@ -16,13 +16,17 @@ weekday-based pricing rule can be configured.
 ## Features
 
 - **Status dot** — colored `● PEAK` / `● OFF-PEAK`: red at peak, green
-  off-peak, yellow when peak starts within 30 minutes. On v1 it sits next to
-  the home prompt; on v2 it lives in the footer status row. The permanent
-  `(can freeze)` note means the display can paint stale data after sleep or
-  a timer stall — treat it as guidance.
+  off-peak, yellow when peak starts within 30 minutes. It appears in the
+  session status line and alongside the home prompt on v1; on v2 it lives in
+  the prompt/footer status rows. The permanent `(can freeze)` note means the
+  display can paint stale data after sleep or a timer stall — treat it as
+  guidance.
 - **Sidebar panel** — current status, UTC + local time, next transition
   across days, and per-window countdowns. Collapsible to a compact status
   line from `/dspeak`.
+- **Model-aware status** — DeepSeek status is shown only for matching
+  providers/models. The status dot also appears in the session footer, so it
+  remains visible when the sidebar is collapsed on narrow terminals.
 - **`/dspeak`** — in-app window management (add, remove, reset) with a live
   status header. Edits persist across restarts. Format: `HH:MM-HH:MM` in UTC,
   optionally restricted to weekdays (`22:00-02:00`, `06:00-10:00 Mon-Fri`,
@@ -81,7 +85,7 @@ Then restart opencode. Check `npm view ds-peak-warningx version` for the latest.
   "plugin": [["ds-peak-warningx@1.5.0", { "ranges": [
     { "start": "01:00", "end": "04:00", "days": [1, 2, 3, 4, 5] },
     { "start": "22:00", "end": "02:00" }
-  ] }]]
+  ], "statusProviders": ["deepseek"] }]]
 }
 ```
 
@@ -91,6 +95,9 @@ Then restart opencode. Check `npm view ds-peak-warningx version` for the latest.
 - `order` — sidebar slot order (default `150`).
 - `panel` — `false` (or the `/dspeak` toggle) collapses the panel to a
   compact status line.
+- `statusProviders` — provider/model substrings whose configured pricing
+  windows should be displayed. Defaults to `["deepseek"]`; an empty list
+  displays the status for every model.
 - `guard` — `{ "enabled": true, "mode": "block", "cooldownMs": 300000,
   "providers": ["deepseek"] }`.
 
@@ -128,7 +135,7 @@ then restart opencode.
 
 ### Options (`cli.json`)
 
-Same options as v1 (`ranges`, `panel`, `guard`); `order` is v1-only.
+Same options as v1 (`ranges`, `panel`, `statusProviders`, `guard`); `order` is v1-only.
 
 ## Development
 

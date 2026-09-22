@@ -22,6 +22,7 @@ import {
 } from "./config.ts"
 import type { DsPeakOptions, GuardSettings, TimeRange } from "./types.ts"
 import { formatCooldown } from "./guard.ts"
+import { DEFAULT_STATUS_PROVIDERS, statusProviderMatches } from "./provider.ts"
 import { loadCoverage, loadGuard, loadLastAck, loadPanelVisible, persistCoverage } from "./state.ts"
 import { formatLastActivity, installPromptGuard, type GuardActivity } from "./guard-intercept.ts"
 import { parseConfigModel } from "./guard.ts"
@@ -46,6 +47,10 @@ const tui: TuiPlugin = async (api, options) => {
   const [panelVisible, setPanelVisible] = createSignal<boolean>(loadPanelVisible(api.kv, opts))
   const [activity, setActivity] = createSignal<GuardActivity | null>(null)
   const [guardInstalled, setGuardInstalled] = createSignal(false)
+  const statusProviders = Array.isArray(opts.statusProviders)
+    ? opts.statusProviders.filter((provider): provider is string => typeof provider === "string")
+    : DEFAULT_STATUS_PROVIDERS
+  const [modelRefresh, setModelRefresh] = createSignal(0)
 
   // Update in-memory state and persist to KV so edits survive restarts.
   // Re-sanitizes defensively so even a hypothetical direct caller cannot
@@ -116,6 +121,17 @@ const tui: TuiPlugin = async (api, options) => {
     }
   }
 
+  const statusVisible = (sessionID?: string) => {
+    modelRefresh()
+    const model = sessionID ? getSessionModel(sessionID) : getDefaultModel()
+    return statusProviderMatches(model.providerID, model.modelID, statusProviders)
+  }
+  const getCurrentSessionID = (): string | undefined => {
+    const route = api.route.current
+    const sessionID = route.name === "session" ? route.params?.sessionID : undefined
+    return typeof sessionID === "string" ? sessionID : undefined
+  }
+
   // Peak guard: wraps `client.session.prompt`/`promptAsync` only. Slash
   // commands, shell mode, session switching and settings never flow through
   // those methods, so they structurally cannot deadlock — unlike the old
@@ -165,12 +181,18 @@ const tui: TuiPlugin = async (api, options) => {
   }
   try {
     api.event.on("session.updated" as never, () => {
+      setModelRefresh((value) => value + 1)
       try {
         guard.ensurePatched()
       } catch {
         // ignore re-patch errors
       }
     })
+  } catch {
+    // unknown event type on this host; skip
+  }
+  try {
+    api.event.on("session.model.selected" as never, () => setModelRefresh((value) => value + 1))
   } catch {
     // unknown event type on this host; skip
   }
@@ -221,15 +243,32 @@ const tui: TuiPlugin = async (api, options) => {
           return (
             <Show
               when={panelVisible()}
-              fallback={<PeakPanelMini theme={ctx.theme.current} ranges={ranges} runs={runs} />}
+              fallback={
+                <Show when={statusVisible(getCurrentSessionID())}>
+                  <PeakPanelMini theme={ctx.theme.current} ranges={ranges} runs={runs} />
+                </Show>
+              }
             >
-              <PeakPanel theme={ctx.theme.current} ranges={ranges} runs={runs} guardLine={guardLine} />
+              <Show when={statusVisible(getCurrentSessionID())}>
+                <PeakPanel theme={ctx.theme.current} ranges={ranges} runs={runs} guardLine={guardLine} />
+              </Show>
             </Show>
+          )
+        },
+        // Keep the pricing status visible when the sidebar collapses on narrow terminals.
+        session_prompt_right(ctx) {
+          return (
+            <PeakHomeIndicator
+              theme={ctx.theme.current}
+              ranges={ranges}
+              runs={runs}
+              visible={() => statusVisible(getCurrentSessionID())}
+            />
           )
         },
         // Render the minimal PEAK/OFF-PEAK dot on the landing screen.
         home_prompt_right(ctx) {
-          return <PeakHomeIndicator theme={ctx.theme.current} ranges={ranges} runs={runs} />
+          return <PeakHomeIndicator theme={ctx.theme.current} ranges={ranges} runs={runs} visible={() => statusVisible()} />
         },
       },
     })

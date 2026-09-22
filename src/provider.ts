@@ -27,3 +27,21 @@ export function statusProviderMatches(
   const target = `${providerID ?? ""}/${modelID ?? ""}`.toLowerCase()
   return providers.some((provider) => target.includes(provider.toLowerCase()))
 }
+
+/** Read the newly chosen model before OpenCode persists it to session state. */
+export function modelFromSelectionEvent(
+  event: unknown,
+): { sessionID: string; providerID: string; modelID: string } | undefined {
+  if (!event || typeof event !== "object") return undefined
+  const data = (event as { data?: unknown }).data
+  if (!data || typeof data !== "object") return undefined
+
+  const { sessionID, model } = data as {
+    sessionID?: unknown
+    model?: { providerID?: unknown; id?: unknown }
+  }
+  if (typeof sessionID !== "string" || typeof model?.providerID !== "string" || typeof model.id !== "string") {
+    return undefined
+  }
+  return { sessionID, providerID: model.providerID, modelID: model.id }
+}

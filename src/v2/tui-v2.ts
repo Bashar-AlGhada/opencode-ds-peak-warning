@@ -11,7 +11,7 @@ import {
   WEEKDAY_DEFAULT_DAYS,
 } from "../config.ts"
 import type { DsPeakOptions, GuardSettings, TimeRange } from "../types.ts"
-import { resolveStatusProviders, statusProviderMatches } from "../provider.ts"
+import { modelFromSelectionEvent, resolveStatusProviders, statusProviderMatches } from "../provider.ts"
 import { formatCooldown } from "../guard.ts"
 import { loadCoverage, loadGuard, loadLastAck, loadPanelVisible, persistCoverage } from "../state.ts"
 import { formatLastActivity, installPromptGuard, type GuardActivity } from "../guard-intercept.ts"
@@ -55,11 +55,14 @@ async function setupV2(context: Context): Promise<() => void> {
   const [guardInstalled, setGuardInstalled] = createSignal(false)
   const statusProviders = resolveStatusProviders(opts.statusProviders)
   const [modelRefresh, setModelRefresh] = createSignal(0)
+  const selectedModels = new Map<string, { providerID: string; modelID: string }>()
 
   const statusVisible = (sessionID?: string) => {
     modelRefresh()
     const activeSessionID = sessionID ?? context.ui.tabs.list().find((tab) => tab.active)?.sessionID
     if (!activeSessionID) return statusProviders.length === 0
+    const selected = selectedModels.get(activeSessionID)
+    if (selected) return statusProviderMatches(selected.providerID, selected.modelID, statusProviders)
     const model = context.data.session.get(activeSessionID) as
       | { model?: { providerID?: string; id?: string } }
       | undefined
@@ -154,8 +157,17 @@ async function setupV2(context: Context): Promise<() => void> {
   for (const t of ["session.created", "session.model.selected"] as const) {
     try {
       unsubs.push(
-        context.data.on(t as never, () => {
+        context.data.on(t as never, (event) => {
           try {
+            if (t === "session.model.selected") {
+              const selected = modelFromSelectionEvent(event)
+              if (selected) {
+                selectedModels.set(selected.sessionID, {
+                  providerID: selected.providerID,
+                  modelID: selected.modelID,
+                })
+              }
+            }
             setModelRefresh((value) => value + 1)
             guard.ensurePatched()
           } catch {

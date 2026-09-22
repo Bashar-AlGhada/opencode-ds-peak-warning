@@ -22,7 +22,7 @@ import {
 } from "./config.ts"
 import type { DsPeakOptions, GuardSettings, TimeRange } from "./types.ts"
 import { formatCooldown } from "./guard.ts"
-import { resolveStatusProviders, statusProviderMatches } from "./provider.ts"
+import { modelFromSelectionEvent, resolveStatusProviders, statusProviderMatches } from "./provider.ts"
 import { loadCoverage, loadGuard, loadLastAck, loadPanelVisible, persistCoverage } from "./state.ts"
 import { formatLastActivity, installPromptGuard, type GuardActivity } from "./guard-intercept.ts"
 import { parseConfigModel } from "./guard.ts"
@@ -49,6 +49,7 @@ const tui: TuiPlugin = async (api, options) => {
   const [guardInstalled, setGuardInstalled] = createSignal(false)
   const statusProviders = resolveStatusProviders(opts.statusProviders)
   const [modelRefresh, setModelRefresh] = createSignal(0)
+  const selectedModels = new Map<string, { providerID: string; modelID: string }>()
 
   // Update in-memory state and persist to KV so edits survive restarts.
   // Re-sanitizes defensively so even a hypothetical direct caller cannot
@@ -102,6 +103,8 @@ const tui: TuiPlugin = async (api, options) => {
   // configured default (e.g. "deepseek/deepseek-chat").
   const getSessionModel = (sessionID: string) => {
     try {
+      const selected = selectedModels.get(sessionID)
+      if (selected) return selected
       const session = api.state.session.get(sessionID) as
         | { model?: { id?: string; providerID?: string } }
         | undefined
@@ -190,7 +193,16 @@ const tui: TuiPlugin = async (api, options) => {
     // unknown event type on this host; skip
   }
   try {
-    api.event.on("session.model.selected" as never, () => setModelRefresh((value) => value + 1))
+    api.event.on("session.model.selected" as never, (event) => {
+      const selected = modelFromSelectionEvent(event)
+      if (selected) {
+        selectedModels.set(selected.sessionID, {
+          providerID: selected.providerID,
+          modelID: selected.modelID,
+        })
+      }
+      setModelRefresh((value) => value + 1)
+    })
   } catch {
     // unknown event type on this host; skip
   }

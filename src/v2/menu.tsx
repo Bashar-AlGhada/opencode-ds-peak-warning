@@ -24,8 +24,8 @@ export interface V2ConfigMenuProps {
 }
 
 /**
- * v2 /dspeak main menu: the SAME live PeakDialogHeader v1 renders (colored
- * status dot, UTC + local time, next switch with countdown, windows line)
+ * v2 /dspeak main menu: the live PeakDialogHeader renders the colored status
+ * dot, UTC + local time, next switch with countdown, and windows line
  * above a native keyboard-driven select list (up/down/j/k + enter, with
  * descriptions — the same widget family the host builds its own selects
  * from).
@@ -33,7 +33,7 @@ export interface V2ConfigMenuProps {
  * The v2 promise `dialog.select()` renders a bare host-styled list with no
  * header slot, so the main round goes through `dialog.show()` with this
  * component instead. Leaf submenus (guard, add/remove, reset, diagnostics)
- * stay promise-based, matching v1's host-dialog leaves.
+ * stay promise-based, matching the host dialog API.
  */
 export function V2ConfigMenu(props: V2ConfigMenuProps) {
   let list: SelectRenderable | undefined
@@ -47,7 +47,7 @@ export function V2ConfigMenu(props: V2ConfigMenuProps) {
     }
   })
   // The native select owns up/down/enter; escape has no select binding, so
-  // close the menu explicitly (mirrors dismissing the v1 dialog).
+  // Close the menu explicitly because the native select has no escape binding.
   useKeyboard((key: KeyEvent) => {
     if (key.name === "escape") {
       key.preventDefault()

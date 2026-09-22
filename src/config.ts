@@ -44,9 +44,6 @@ export const KV_GUARD_KEY = "ds-peak:guard"
 /** KV key where the last guard acknowledgement timestamp (ms) is stored. */
 export const KV_GUARD_ACK_KEY = "ds-peak:guard:ack"
 
-/** Default sidebar slot order (slots render lowest-first). */
-export const DEFAULT_SLOT_ORDER = 150
-
 /** How often the clock signal ticks and status views re-render. */
 export const TICK_MS = 30_000
 

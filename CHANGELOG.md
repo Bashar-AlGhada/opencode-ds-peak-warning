@@ -2,6 +2,23 @@
 
 All notable changes to this project will be documented in this file.
 
+## [2.0.0] - 2026-09-22
+
+### Breaking
+
+- Target OpenCode v2 only; the legacy TUI export and private model-state watcher
+  were removed.
+- Status visibility now derives directly from the live selected model supplied
+  by public OpenCode slots, so changes take effect before prompt submission.
+- Provider filtering is no longer configurable: the status appears whenever the
+  provider ID or model ID contains `deepseek`, case-insensitively.
+
+### Added
+
+- One-command installation with `opencode plugin add ds-peak-warningx`.
+
+## Unreleased
+
 ## [1.5.0] - 2026-09-21
 
 ### Added

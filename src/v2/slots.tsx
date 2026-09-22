@@ -3,6 +3,7 @@ import { Show } from "solid-js"
 import type { Context } from "@opencode/plugin/tui/context"
 import type { PeakRun } from "../ranges.ts"
 import type { TimeRange } from "../types.ts"
+import type { SelectedModel } from "../provider.ts"
 import { PeakHomeIndicator } from "../home.tsx"
 import { PeakPanel, PeakPanelMini } from "../panel.tsx"
 import { adaptV2Theme } from "./theme.ts"
@@ -13,11 +14,24 @@ export interface V2SlotState {
   ranges: () => TimeRange[]
   runs: () => PeakRun[]
   panelVisible: () => boolean
+  statusVisible: (model: SelectedModel | undefined) => boolean
   guardLine: () => string | null
   commands: {
     configure: () => Promise<void>
     confirmPeak: () => void
   }
+}
+
+// OpenCode PR #50745 adds `model` to these slot inputs. Keep this boundary
+// compatible with the published 2.0.14 declarations until that API is released;
+// the host-supplied runtime field remains the only source of model identity.
+type SlotModelInput = {
+  readonly model?: SelectedModel
+}
+
+function selectedModelFromSlotInput(input: unknown): SelectedModel | undefined {
+  if (!input || typeof input !== "object") return undefined
+  return (input as SlotModelInput).model
 }
 
 /**
@@ -39,17 +53,19 @@ export function registerV2Slots(context: Context, state: V2SlotState): () => voi
     claim(
       context.ui.slot({
         append: "sidebar.content",
-        render: () => (
-          <Show
-            when={state.panelVisible()}
-            fallback={<PeakPanelMini theme={adaptV2Theme(context.theme)} ranges={state.ranges} runs={state.runs} />}
-          >
-            <PeakPanel
-              theme={adaptV2Theme(context.theme)}
-              ranges={state.ranges}
-              runs={state.runs}
-              guardLine={state.guardLine}
-            />
+        render: (input) => (
+          <Show when={state.statusVisible(selectedModelFromSlotInput(input))}>
+            <Show
+              when={state.panelVisible()}
+              fallback={<PeakPanelMini theme={adaptV2Theme(context.theme)} ranges={state.ranges} runs={state.runs} />}
+            >
+              <PeakPanel
+                theme={adaptV2Theme(context.theme)}
+                ranges={state.ranges}
+                runs={state.runs}
+                guardLine={state.guardLine}
+              />
+            </Show>
           </Show>
         ),
       }),
@@ -66,13 +82,30 @@ export function registerV2Slots(context: Context, state: V2SlotState): () => voi
     claim(
       context.ui.slot({
         append: "home.footer.status",
-        render: () => (
-          <PeakHomeIndicator theme={adaptV2Theme(context.theme)} ranges={state.ranges} runs={state.runs} />
+        render: (input) => (
+          <Show when={state.statusVisible(selectedModelFromSlotInput(input))}>
+            <PeakHomeIndicator theme={adaptV2Theme(context.theme)} ranges={state.ranges} runs={state.runs} />
+          </Show>
         ),
       }),
     )
   } catch {
     // footer status unavailable; sidebar panel still works
+  }
+
+  try {
+    claim(
+      context.ui.slot({
+        append: "prompt.footer.status",
+        render: (input) => (
+          <Show when={state.statusVisible(selectedModelFromSlotInput(input))}>
+            <PeakHomeIndicator theme={adaptV2Theme(context.theme)} ranges={state.ranges} runs={state.runs} />
+          </Show>
+        ),
+      }),
+    )
+  } catch {
+    // prompt footer status unavailable; sidebar and home status still work
   }
 
   // Global command layer: registered from a component render (NOT from

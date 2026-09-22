@@ -11,6 +11,7 @@ import {
   WEEKDAY_DEFAULT_DAYS,
 } from "../config.ts"
 import type { DsPeakOptions, GuardSettings, TimeRange } from "../types.ts"
+import { isDeepSeekModel } from "../provider.ts"
 import { formatCooldown } from "../guard.ts"
 import { loadCoverage, loadGuard, loadLastAck, loadPanelVisible, persistCoverage } from "../state.ts"
 import { formatLastActivity, installPromptGuard, type GuardActivity } from "../guard-intercept.ts"
@@ -21,20 +22,17 @@ import { registerV2Slots } from "./slots.tsx"
 import { openConfigMenuV2 } from "./dialogs.tsx"
 import { adaptV2Theme } from "./theme.ts"
 
-/** Stable plugin id: v2 storage is scoped by it; keep identical to v1. */
+/** Stable plugin id used to scope the v2 storage. */
 export const PLUGIN_ID = "ds-peak-warningx"
 
 /**
- * v2 (opencode 2.x) CLI plugin setup. Mirrors the v1 `tui()` flow against
- * the v2 context: durable storage instead of KV, `dialog.show()` menus
- * instead of the v1 JSX dialog stack, slot claims instead of slot
- * registration, and a reactive keymap layer instead of
- * registerLayer/command fallback.
+ * OpenCode v2 CLI plugin setup: durable storage, `dialog.show()` menus, slot
+ * claims, and a reactive keymap layer.
  *
  * No runtime import of `@opencode/plugin` here (only `import type`, erased
  * at transpile): the default export is a hand-written `{ id, setup }`
  * object (Plugin.define is identity at runtime; the v2 loader validates
- * structurally), so v1 hosts never face an unresolvable import.
+ * structurally).
  */
 async function setupV2(context: Context): Promise<() => void> {
   const opts = (context.options ?? {}) as Partial<DsPeakOptions>
@@ -42,8 +40,8 @@ async function setupV2(context: Context): Promise<() => void> {
   ensureClockRunning()
   const initial = loadCoverage(kv, opts)
   if (initial.rebuilt) persistCoverage(kv, initial.doc)
-  // Single choke point for window state, same as v1: every settings change
-  // flows through `save`, which always rebuilds the merged coverage array.
+  // Single choke point for window state: every settings change flows through
+  // `save`, which always rebuilds the merged coverage array.
   const [coverage, setCoverage] = createSignal<CoverageDoc>(initial.doc)
   const ranges = () => coverage().ranges
   const runs = () => coverage().runs
@@ -52,6 +50,7 @@ async function setupV2(context: Context): Promise<() => void> {
   const [panelVisible, setPanelVisible] = createSignal<boolean>(loadPanelVisible(kv, opts))
   const [activity, setActivity] = createSignal<GuardActivity | null>(null)
   const [guardInstalled, setGuardInstalled] = createSignal(false)
+  const statusVisible = isDeepSeekModel
 
   const save = (next: TimeRange[]) => {
     // An explicitly emptied list means "no peak windows" (not "defaults").
@@ -98,7 +97,7 @@ async function setupV2(context: Context): Promise<() => void> {
 
   // Peak guard: wraps `client.session.prompt` only (v2 has no promptAsync).
   // Slash commands, shell mode and settings never flow through that method,
-  // so they structurally cannot deadlock — same design as v1.
+  // so they structurally cannot deadlock.
   const guard = installPromptGuard(
     { client: context.client },
     v2GuardDeps(context, {
@@ -206,6 +205,7 @@ async function setupV2(context: Context): Promise<() => void> {
     ranges,
     runs,
     panelVisible,
+    statusVisible,
     guardLine,
     commands: { configure, confirmPeak },
   })
@@ -233,8 +233,7 @@ async function setupV2(context: Context): Promise<() => void> {
 
 /**
  * The v2 plugin definition. Hand-written `{ id, setup }` (no Plugin.define
- * call — it is identity at runtime and importing the value would add a
- * runtime dependency v1 hosts cannot resolve). The `satisfies` check pins
- * the v2 contract at typecheck time.
+ * call — it is identity at runtime and importing the value is unnecessary.
+ * The `satisfies` check pins the v2 contract at typecheck time.
  */
 export const v2plugin = { id: PLUGIN_ID, setup: setupV2 } satisfies Definition

@@ -11,7 +11,6 @@ export interface TimeRange {
 export interface DsPeakOptions {
   // Peak windows overriding the defaults; each may carry a `days` pattern.
   ranges?: TimeRange[]
-  order?: number
   // Sidebar panel visibility; shown unless explicitly disabled. A saved KV
   // value from the /dspeak toggle wins over this option.
   panel?: boolean

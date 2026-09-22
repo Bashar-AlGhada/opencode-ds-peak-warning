@@ -69,10 +69,9 @@ export function toneColor(theme: PeakThemeColors, tone: StatusTone) {
 }
 
 /**
- * Minimal color surface the status views need. The v1 `TuiThemeCurrent`
- * satisfies this structurally; the v2 adapter (`src/v2/theme.ts`) builds it
- * from the nested `ResolvedTheme` tokens — so one set of components serves
- * both generations without either theme type leaking into the views.
+ * Minimal color surface the status views need. The v2 adapter
+ * (`src/v2/theme.ts`) builds it from the nested `ResolvedTheme` tokens so
+ * shared views do not depend on the host theme shape.
  */
 export interface PeakThemeColors {
   text: RGBA

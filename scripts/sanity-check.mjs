@@ -1,4 +1,5 @@
 import { DEFAULT_GUARD_ENABLED, DEFAULT_RANGES, coercePanelVisible } from "../src/config.ts"
+import { isDeepSeekModel } from "../src/provider.ts"
 import {
   appliesOnDay,
   beijingDayOfWeek,
@@ -294,6 +295,13 @@ check("panel KV false wins", coercePanelVisible(false, true), false)
 check("panel missing KV falls back", coercePanelVisible(undefined, true), true)
 check("panel wrong-type KV falls back", coercePanelVisible("shown", true), true)
 check("guard default enabled", DEFAULT_GUARD_ENABLED, true)
+
+// --- model-aware status display ---
+check("DeepSeek provider is visible", isDeepSeekModel({ providerID: "deepseek", modelID: "deepseek-chat" }), true)
+check("DeepSeek model alias is visible", isDeepSeekModel({ providerID: "openrouter", modelID: "deepseek/deepseek-r1" }), true)
+check("provider matching is case-insensitive", isDeepSeekModel({ providerID: "DeepSeek", modelID: "chat" }), true)
+check("non-DeepSeek model is hidden", isDeepSeekModel({ providerID: "openai", modelID: "gpt-6-sol" }), false)
+check("missing model is hidden", isDeepSeekModel(undefined), false)
 
 // --- status tone: red peak, green off-peak, yellow when peak < 30 min away ---
 const toneNow = d("2026-08-26T02:00:00Z") // Wed, inside the 01:00-04:00 UTC window
@@ -681,7 +689,6 @@ import {
   statusInRuns,
 } from "../src/ranges.ts"
 import {
-  CLOCK_EVENT_TYPES,
   clockDiagnostics,
   gateAllows,
   poke,
@@ -816,31 +823,6 @@ check("gate allows at threshold", gateAllows(1_000, 1_000 + CLOCK_EVENT_GATE_MS)
   check("unknown sources counted too", clockDiagnostics().eventCounts["custom-type"], 1)
   check("reset leaves clock stopped", clockDiagnostics().started, false)
 }
-check("event tiers cover lifecycle", CLOCK_EVENT_TYPES.includes("session.updated"), true)
-check("event tiers cover interaction", CLOCK_EVENT_TYPES.includes("tui.prompt.append"), true)
-check("event tiers cover generation firehose", CLOCK_EVENT_TYPES.includes("message.part.delta"), true)
-check("event tiers have no duplicates", new Set(CLOCK_EVENT_TYPES).size, CLOCK_EVENT_TYPES.length)
-
-// The watchdog must fan in the ENTIRE Event["type"] union: extract every
-// dotted type literal from the SDK's generated types (numeric-suffixed
-// entries like "session.updated.1" are schema duplicates, not bus events)
-// and enforce coverage in both directions, so a new SDK event fails loudly.
-{
-  const sdkTypes = readFileSync(
-    join(dirname(new URL(import.meta.url).pathname.replace(/^\/([A-Za-z]:)/, "$1")), "..", "node_modules", "@opencode-ai", "sdk", "dist", "v2", "gen", "types.gen.d.ts"),
-    "utf8",
-  )
-  const sdkEvents = new Set(
-    [...sdkTypes.matchAll(/type: "([a-z0-9][a-z0-9._-]*)"/g)]
-      .map((m) => m[1])
-      .filter((t) => t.includes(".") && !/\.\d+$/.test(t)),
-  )
-  const missing = [...sdkEvents].filter((t) => !CLOCK_EVENT_TYPES.includes(t))
-  const extra = CLOCK_EVENT_TYPES.filter((t) => !sdkEvents.has(t))
-  check("watchdog covers every SDK event type", missing, [])
-  check("watchdog subscribes to real event types only", extra, [])
-}
-
 // --- time boundaries: UTC clock vs Beijing calendar vs local display ---
 {
   // Week-minute mapping agrees with the day + clock primitives over 10 days.
@@ -882,8 +864,9 @@ check("local display follows the clock (UTC)", localMinutes(d("2026-08-26T02:30:
 // --- every relative import in src/ (plus the root v2 entry) must resolve ---
 // Guards against broken specifiers (e.g. ".ts" pointing at a ".tsx" file),
 // which fail silently at plugin load time in opencode.
-import { existsSync, readdirSync, readFileSync } from "node:fs"
+import { existsSync, mkdtempSync, readdirSync, readFileSync, renameSync, rmSync, writeFileSync } from "node:fs"
 import { dirname, join } from "node:path"
+import { tmpdir } from "node:os"
 const repoDir = join(dirname(new URL(import.meta.url).pathname.replace(/^\/([A-Za-z]:)/, "$1")), "..")
 const srcDir = join(repoDir, "src")
 let importChecks = 0
@@ -911,10 +894,27 @@ for (const rootEntry of ["tui.ts"]) {
 }
 console.log(`     (${importChecks} relative imports checked)`)
 
-// --- v2 directory entry re-exports the dual module (not a fork) ---
+// --- v2 directory entry and package exports point directly to the v2 plugin ---
 {
   const rootTui = readFileSync(join(repoDir, "tui.ts"), "utf8")
-  check("root tui.ts re-exports src/index.tsx", rootTui.includes("./src/index.tsx"), true)
+  const indexSource = readFileSync(join(srcDir, "index.tsx"), "utf8")
+  const typesSource = readFileSync(join(srcDir, "types.ts"), "utf8")
+  const readme = readFileSync(join(repoDir, "README.md"), "utf8")
+  const pkg = JSON.parse(readFileSync(join(repoDir, "package.json"), "utf8"))
+  check("package is v2 major", pkg.version.startsWith("2."), true)
+  check("package exposes the v2 tui export", pkg.exports?.["./tui"], "./src/index.tsx")
+  check("package uses the v2 plugin package", typeof pkg.peerDependencies?.["@opencode/plugin"], "string")
+  check("legacy plugin package removed", Object.hasOwn(pkg.peerDependencies ?? {}, "@opencode-ai/plugin"), false)
+  check("root entry exports v2 directly", rootTui.includes('from "./src/v2/tui-v2.ts"'), true)
+  check("index exports v2 directly", indexSource.includes('from "./v2/tui-v2.ts"'), true)
+  check("v1 implementation removed", existsSync(join(repoDir, "src", "tui.tsx")), false)
+  check("private model watcher removed", existsSync(join(repoDir, "src", "model-state.ts")), false)
+  check("statusProviders option removed", typesSource.includes("statusProviders"), false)
+  check("README documents plugin add", readme.includes("opencode plugin add ds-peak-warningx"), true)
+  check("README removes v1", readme.includes("opencode v1"), false)
+  check("README removes statusProviders", readme.includes("statusProviders"), false)
+  check("README uses v2 plugin entry object", readme.includes('"package": "ds-peak-warningx"'), true)
+  check("README does not use legacy plugin tuple", !readme.includes('["ds-peak-warningx", {'), true)
 }
 
 // --- v2 storage keys must satisfy the host segment rule ---
@@ -968,22 +968,16 @@ console.log(`     (${importChecks} relative imports checked)`)
   check("v2 layer registers from slot render", slotsSrc.includes("registerV2Commands"), true)
   check("v2 layer NOT registered from setup", !setupSrc.includes("registerV2Commands"), true)
 }
-// --- v2 dual export: one module serves v1 ({id,tui}) and v2 ({id,setup}) ---
-// Static text checks (no runtime import: index pulls .tsx, which strip-types
-// cannot execute). Both generations must agree on the plugin id.
+// --- v2 slot visibility consumes the model supplied by each slot input ---
 {
-  const indexSrc = readFileSync(join(srcDir, "index.tsx"), "utf8")
-  const tuiSrc = readFileSync(join(srcDir, "tui.tsx"), "utf8")
-  const v2Src = readFileSync(join(srcDir, "v2", "tui-v2.ts"), "utf8")
-  check("dual export exposes tui (v1)", /tui:\s*tuiModule\.tui/.test(indexSrc), true)
-  check("dual export spreads v2 definition", /\.\.\.v2plugin/.test(indexSrc), true)
-  check("dual export satisfies v1 module shape", /satisfies TuiPluginModule/.test(indexSrc), true)
-  check("v2 definition pins v2 contract", /satisfies Definition/.test(v2Src), true)
-  const v1Id = tuiSrc.match(/id:\s*"([^"]+)"/)?.[1]
-  const v2Id = v2Src.match(/PLUGIN_ID\s*=\s*"([^"]+)"/)?.[1]
-  check("v1 module id present", typeof v1Id, "string")
-  check("v2 PLUGIN_ID present", typeof v2Id, "string")
-  check("v1/v2 plugin ids match", v1Id, v2Id)
+  const slotsSrc = readFileSync(join(srcDir, "v2", "slots.tsx"), "utf8")
+  check("slot boundary reads the host model field", slotsSrc.includes("(input as SlotModelInput).model"), true)
+  check(
+    "every visual slot uses its model input",
+    (slotsSrc.match(/statusVisible\(selectedModelFromSlotInput\(input\)\)/g) ?? []).length,
+    3,
+  )
+  check("home status accepts its input", /render:\s*\(input\)\s*=>[\s\S]*?statusVisible\(selectedModelFromSlotInput\(input\)\)/.test(slotsSrc), true)
 }
 
 // --- v2 clock fan-in covers the whole v2 OpenCodeEvent union ---

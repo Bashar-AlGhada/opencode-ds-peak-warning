@@ -7,7 +7,7 @@ import type { PeakThemeColors } from "../status.ts"
  * token and no flat error/warning/success aliases):
  * - text / textMuted -> text.base / text.muted
  * - error / warning / success -> text.feedback.{error,warning,success}.base
- * (feedback red/yellow/green, the same semantic roles as v1)
+ * (feedback red/yellow/green)
  */
 export function adaptV2Theme(theme: Context["theme"]): PeakThemeColors {
   return {

@@ -58,8 +58,9 @@ async function setupV2(context: Context): Promise<() => void> {
 
   const statusVisible = (sessionID?: string) => {
     modelRefresh()
-    if (!sessionID) return false
-    const model = context.data.session.get(sessionID) as
+    const activeSessionID = sessionID ?? context.ui.tabs.list().find((tab) => tab.active)?.sessionID
+    if (!activeSessionID) return false
+    const model = context.data.session.get(activeSessionID) as
       | { model?: { providerID?: string; id?: string } }
       | undefined
     return statusProviderMatches(model?.model?.providerID, model?.model?.id, statusProviders)

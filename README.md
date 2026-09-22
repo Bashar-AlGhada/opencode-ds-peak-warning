@@ -101,6 +101,16 @@ Then restart opencode. Check `npm view ds-peak-warningx version` for the latest.
 - `guard` — `{ "enabled": true, "mode": "block", "cooldownMs": 300000,
   "providers": ["deepseek"] }`.
 
+### v1 live-model limitations
+
+opencode v1 does not expose its in-memory model selection to TUI plugins. To
+refresh immediately after `/model`, the plugin watches v1's global
+`model.json` state. This is best-effort: another opencode process, an identical
+variant save, or a delayed write while switching sessions can briefly show the
+wrong status. Keyboard recent/favorite cycling is not observed because v1 does
+not persist those changes or emit a plugin event. Sending a prompt remains
+safe: the guard resolves the model from the prompt arguments first.
+
 ## opencode v2
 
 Same package, same features — one `./tui` entry serves both generations.

@@ -2,6 +2,20 @@
 
 All notable changes to this project will be documented in this file.
 
+## Unreleased
+
+### Fixed
+
+- v1 status indicators now refresh within the model-state polling interval
+  after selecting a model through `/model`, before a prompt is sent.
+
+### Known limitations
+
+- v1 exposes no process-local model-selection event, so live status refreshes
+  use its global `model.json` state. Cross-process writes, identical no-op
+  saves, and delayed writes across session switches can briefly misattribute a
+  model. Keyboard model cycling remains invisible until v1 exposes a signal.
+
 ## [1.5.0] - 2026-09-21
 
 ### Added

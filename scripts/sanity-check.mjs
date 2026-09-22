@@ -1,6 +1,13 @@
 import { DEFAULT_GUARD_ENABLED, DEFAULT_RANGES, coercePanelVisible } from "../src/config.ts"
 import { DEFAULT_STATUS_PROVIDERS, modelFromSelectionEvent, resolveStatusProviders, statusProviderMatches } from "../src/provider.ts"
 import {
+  MODEL_STATE_POLL_MS,
+  modelFromState,
+  resolveVisibleModel,
+  retainUntilAbort,
+  watchModelState,
+} from "../src/model-state.ts"
+import {
   appliesOnDay,
   beijingDayOfWeek,
   contains,
@@ -311,6 +318,125 @@ check(
   modelFromSelectionEvent({ data: { sessionID: "ses_1", model: { providerID: "openai", id: "gpt-6.0-codex" } } }),
   { sessionID: "ses_1", providerID: "openai", modelID: "gpt-6.0-codex" },
 )
+check(
+  "model state exposes the most recently selected model",
+  modelFromState({ recent: [{ providerID: "openai", modelID: "gpt-6.0-codex" }] }),
+  { providerID: "openai", modelID: "gpt-6.0-codex" },
+)
+check("malformed model state is ignored", modelFromState({ recent: [null] }), undefined)
+{
+  const selected = new Map([["ses_openai", { providerID: "openai", modelID: "gpt-6-astra" }]])
+  const fallback = { providerID: "deepseek", modelID: "deepseek-flash" }
+  check("live selection applies only to its session", resolveVisibleModel("ses_openai", undefined, selected, fallback), {
+    providerID: "openai",
+    modelID: "gpt-6-astra",
+  })
+  check("other sessions keep their own fallback", resolveVisibleModel("ses_deepseek", undefined, selected, fallback), fallback)
+}
+{
+  const controller = new AbortController()
+  let disposed = 0
+  const dispose = retainUntilAbort(controller.signal, () => disposed++)
+  controller.abort()
+  dispose()
+  check("model watcher remains retained until lifecycle abort", disposed, 1)
+}
+{
+  const dir = mkdtempSync(join(tmpdir(), "ds-peak-model-"))
+  const seen = []
+  const stop = watchModelState(dir, (model) => seen.push(model))
+  check("model state polling interval is 100ms", MODEL_STATE_POLL_MS, 100)
+  await new Promise((resolve) => setTimeout(resolve, 20))
+  writeFileSync(join(dir, "model.json.tmp"), JSON.stringify({ recent: [{ providerID: "deepseek", modelID: "deepseek-flash" }] }))
+  renameSync(join(dir, "model.json.tmp"), join(dir, "model.json"))
+  for (let attempt = 0; attempt < 50 && seen.length === 0; attempt++) {
+    await new Promise((resolve) => setTimeout(resolve, 10))
+  }
+  writeFileSync(join(dir, "model.json.tmp"), JSON.stringify({ recent: [{ providerID: "openai", modelID: "gpt-6-astra" }] }))
+  renameSync(join(dir, "model.json.tmp"), join(dir, "model.json"))
+  for (let attempt = 0; attempt < 50 && seen.length < 2; attempt++) {
+    await new Promise((resolve) => setTimeout(resolve, 10))
+  }
+  stop()
+  rmSync(dir, { recursive: true })
+  check("model state watcher follows repeated atomic replacements", seen, [
+    { providerID: "deepseek", modelID: "deepseek-flash" },
+    { providerID: "openai", modelID: "gpt-6-astra" },
+  ])
+  check("model state watcher exposes non-DeepSeek selection", seen.at(-1), {
+    providerID: "openai",
+    modelID: "gpt-6-astra",
+  })
+}
+{
+  const dir = mkdtempSync(join(tmpdir(), "ds-peak-model-dedupe-"))
+  const file = join(dir, "model.json")
+  writeFileSync(file, JSON.stringify({ recent: [{ providerID: "deepseek", modelID: "deepseek-flash" }] }))
+  const seen = []
+  const stop = watchModelState(dir, (model) => seen.push(model))
+  await new Promise((resolve) => setTimeout(resolve, 150))
+  writeFileSync(
+    join(dir, "model.json.tmp"),
+    JSON.stringify({
+      recent: [{ providerID: "deepseek", modelID: "deepseek-flash" }],
+      favorite: [{ providerID: "deepseek", modelID: "deepseek-flash" }],
+    }),
+  )
+  renameSync(join(dir, "model.json.tmp"), file)
+  await new Promise((resolve) => setTimeout(resolve, 150))
+  writeFileSync(
+    join(dir, "model.json.tmp"),
+    JSON.stringify({
+      recent: [{ providerID: "deepseek", modelID: "deepseek-flash" }],
+      favorite: [{ providerID: "deepseek", modelID: "deepseek-flash" }],
+    }),
+  )
+  renameSync(join(dir, "model.json.tmp"), file)
+  for (let attempt = 0; attempt < 50 && seen.length === 0; attempt++) {
+    await new Promise((resolve) => setTimeout(resolve, 10))
+  }
+  stop()
+  rmSync(dir, { recursive: true })
+  check("unrelated state rewrites do not emit, but identical selection rewrites do", seen, [
+    { providerID: "deepseek", modelID: "deepseek-flash" },
+  ])
+}
+{
+  const dir = mkdtempSync(join(tmpdir(), "ds-peak-model-owner-"))
+  const file = join(dir, "model.json")
+  writeFileSync(file, JSON.stringify({ recent: [{ providerID: "deepseek", modelID: "deepseek-flash" }] }))
+  let owner = "session-a"
+  const seen = []
+  const stop = watchModelState(dir, (model, sessionID) => seen.push({ model, sessionID }), () => owner)
+  await new Promise((resolve) => setTimeout(resolve, 150))
+  owner = "session-b"
+  writeFileSync(join(dir, "model.json.tmp"), JSON.stringify({ recent: [{ providerID: "openai", modelID: "gpt-6-astra" }] }))
+  renameSync(join(dir, "model.json.tmp"), file)
+  await new Promise((resolve) => setTimeout(resolve, 150))
+  writeFileSync(join(dir, "model.json.tmp"), JSON.stringify({ recent: [{ providerID: "deepseek", modelID: "deepseek-flash" }] }))
+  renameSync(join(dir, "model.json.tmp"), file)
+  for (let attempt = 0; attempt < 50 && seen.length === 0; attempt++) {
+    await new Promise((resolve) => setTimeout(resolve, 10))
+  }
+  stop()
+  rmSync(dir, { recursive: true })
+  check("route changes discard ambiguous model selections", seen, [
+    { model: { providerID: "deepseek", modelID: "deepseek-flash" }, sessionID: "session-b" },
+  ])
+}
+{
+  const dir = mkdtempSync(join(tmpdir(), "ds-peak-model-abort-"))
+  const controller = new AbortController()
+  const seen = []
+  const stop = retainUntilAbort(controller.signal, watchModelState(dir, (model) => seen.push(model)))
+  await new Promise((resolve) => setTimeout(resolve, 20))
+  controller.abort()
+  writeFileSync(join(dir, "model.json"), JSON.stringify({ recent: [{ providerID: "deepseek", modelID: "deepseek-flash" }] }))
+  await new Promise((resolve) => setTimeout(resolve, 150))
+  stop()
+  rmSync(dir, { recursive: true })
+  check("lifecycle abort stops model state polling", seen, [])
+}
 
 // --- status tone: red peak, green off-peak, yellow when peak < 30 min away ---
 const toneNow = d("2026-08-26T02:00:00Z") // Wed, inside the 01:00-04:00 UTC window
@@ -899,8 +1025,9 @@ check("local display follows the clock (UTC)", localMinutes(d("2026-08-26T02:30:
 // --- every relative import in src/ (plus the root v2 entry) must resolve ---
 // Guards against broken specifiers (e.g. ".ts" pointing at a ".tsx" file),
 // which fail silently at plugin load time in opencode.
-import { existsSync, readdirSync, readFileSync } from "node:fs"
+import { existsSync, mkdtempSync, readdirSync, readFileSync, renameSync, rmSync, writeFileSync } from "node:fs"
 import { dirname, join } from "node:path"
+import { tmpdir } from "node:os"
 const repoDir = join(dirname(new URL(import.meta.url).pathname.replace(/^\/([A-Za-z]:)/, "$1")), "..")
 const srcDir = join(repoDir, "src")
 let importChecks = 0

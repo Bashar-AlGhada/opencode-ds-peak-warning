@@ -1,4 +1,4 @@
-// v2 (opencode 2.x) directory-install entrypoint.
+// Local directory-install entrypoint for both host generations.
 //
 // The v2 host resolves a local directory spec to `<dir>/tui` (it does NOT
 // consult package.json `exports` for directory targets — that mapping only

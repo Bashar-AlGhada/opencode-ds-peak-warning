@@ -30,6 +30,7 @@ import { openConfigMenu } from "./dialogs.tsx"
 import { showPeakConfirmDialog } from "./guard-ui.tsx"
 import { PeakPanel, PeakPanelMini } from "./panel.tsx"
 import { PeakHomeIndicator } from "./home.tsx"
+import { resolveVisibleModel, retainUntilAbort, watchModelState, type SelectedModel } from "./model-state.ts"
 
 const tui: TuiPlugin = async (api, options) => {
   const opts = (options ?? {}) as Partial<DsPeakOptions>
@@ -50,6 +51,7 @@ const tui: TuiPlugin = async (api, options) => {
   const statusProviders = resolveStatusProviders(opts.statusProviders)
   const [modelRefresh, setModelRefresh] = createSignal(0)
   const selectedModels = new Map<string, { providerID: string; modelID: string }>()
+  const [liveModel, setLiveModel] = createSignal<SelectedModel>()
 
   // Update in-memory state and persist to KV so edits survive restarts.
   // Re-sanitizes defensively so even a hypothetical direct caller cannot
@@ -122,15 +124,25 @@ const tui: TuiPlugin = async (api, options) => {
     }
   }
 
-  const statusVisible = (sessionID?: string) => {
-    modelRefresh()
-    const model = sessionID ? getSessionModel(sessionID) : getDefaultModel()
-    return statusProviderMatches(model.providerID, model.modelID, statusProviders)
-  }
   const getCurrentSessionID = (): string | undefined => {
     const route = api.route.current
     const sessionID = route.name === "session" ? route.params?.sessionID : undefined
     return typeof sessionID === "string" ? sessionID : undefined
+  }
+  const stopModelWatcher = retainUntilAbort(
+    api.lifecycle.signal,
+    watchModelState(api.state.path.state, (model, sessionID) => {
+      if (sessionID) selectedModels.set(sessionID, model)
+      else setLiveModel(model)
+      setModelRefresh((value) => value + 1)
+    }, getCurrentSessionID),
+  )
+  api.lifecycle.onDispose(stopModelWatcher)
+  const statusVisible = (sessionID?: string) => {
+    modelRefresh()
+    const fallback = sessionID ? getSessionModel(sessionID) : getDefaultModel()
+    const model = resolveVisibleModel(sessionID, liveModel(), selectedModels, fallback)
+    return statusProviderMatches(model.providerID, model.modelID, statusProviders)
   }
 
   // Peak guard: wraps `client.session.prompt`/`promptAsync` only. Slash

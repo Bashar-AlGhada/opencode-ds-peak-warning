@@ -4,16 +4,14 @@ import type { GuardSettings, TimeRange } from "../types.ts"
 import { formatDuration } from "../ranges.ts"
 
 /**
- * v2 prompt-guard dependencies: same interception semantics as v1 (wrap the
- * client's `session.prompt`, confirm before DeepSeek sends during peak),
- * but against the v2 CLI context.
+ * v2 prompt-guard dependencies wrap the client's `session.prompt` and confirm
+ * before DeepSeek sends during peak.
  *
- * Model resolution differs from v1: the session's live model
- * (`data.session.get`) is authoritative (covers just-switched models and
+ * The session's live model (`data.session.get`) is authoritative (covers
+ * just-switched models and
  * brand-new sessions, which already carry the server default). There is no
  * v2 TUI equivalent of the old global-config default, so an unknown model
- * fails open — same as the v1 "unknown model" path, and visible on the
- * sidebar `Guard:` line.
+ * fails open and is visible on the sidebar `Guard:` line.
  */
 export function v2GuardDeps(
   context: Context,

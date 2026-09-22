@@ -2,19 +2,22 @@
 
 All notable changes to this project will be documented in this file.
 
+## [2.0.0] - 2026-09-22
+
+### Breaking
+
+- Target OpenCode v2 only; the legacy TUI export and private model-state watcher
+  were removed.
+- Status visibility now derives directly from the live selected model supplied
+  by public OpenCode slots, so changes take effect before prompt submission.
+- Provider filtering is no longer configurable: the status appears whenever the
+  provider ID or model ID contains `deepseek`, case-insensitively.
+
+### Added
+
+- One-command installation with `opencode plugin add ds-peak-warningx`.
+
 ## Unreleased
-
-### Fixed
-
-- v1 status indicators now refresh within the model-state polling interval
-  after selecting a model through `/model`, before a prompt is sent.
-
-### Known limitations
-
-- v1 exposes no process-local model-selection event, so live status refreshes
-  use its global `model.json` state. Cross-process writes, identical no-op
-  saves, and delayed writes across session switches can briefly misattribute a
-  model. Keyboard model cycling remains invisible until v1 exposes a signal.
 
 ## [1.5.0] - 2026-09-21
 

@@ -16,12 +16,11 @@ type V2Storage = Context["storage"]
  * Everything the plugin persists, in one durable JSON document. v2 storage
  * only takes objects (`store<Value extends object>`), so the scalar KV
  * entries (ack timestamp, panel flag) live as fields here instead of
- * separate keys. `null` means "never saved", exactly like a missing v1 KV
- * entry — loaders fall back to options/defaults in that case.
+ * separate keys. `null` means "never saved" — loaders fall back to
+ * options/defaults in that case.
  *
- * Note: v1 KV state does NOT carry over (different backend, keyed by the
- * v1 host). v2 starts from options/defaults once; in-app /dspeak edits
- * persist going forward.
+ * The first load uses options/defaults; in-app `/dspeak` edits persist
+ * afterward.
  */
 export interface V2Persisted {
   coverage: CoverageDoc | null
@@ -40,8 +39,9 @@ const INITIAL: V2Persisted = {
 }
 
 /**
- * Adapt v2 durable storage to the shared KvLike surface, so the v1 loaders
- * (resolveEffectiveRanges, loadCoverage, loadGuard, …) run unchanged.
+ * Adapt v2 durable storage to the shared KvLike surface, so the state loaders
+ * (resolveEffectiveRanges, loadCoverage, loadGuard, …) stay independent of
+ * the host storage API.
  * Reads come from the live solid store (synchronous snapshot); writes go
  * through the store mutator and persist async — a read-after-write in the
  * same tick still sees the write.

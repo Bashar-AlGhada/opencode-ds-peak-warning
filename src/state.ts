@@ -22,9 +22,7 @@ import type { DsPeakOptions, GuardSettings, TimeRange } from "./types.ts"
 import type { KvLike } from "./kv.ts"
 import { sanitizeGuardSettings } from "./guard.ts"
 
-// Shared state loaders: one precedence implementation for both plugin
-// generations (v1 TuiPluginApi.kv and the v2 storage adapter both satisfy
-// KvLike). Pure reads over kv + options; callers persist forward.
+// Shared state loaders keep precedence and persistence decisions in one place.
 
 /**
  * Resolve the effective peak windows. Each entry may carry a day-of-week

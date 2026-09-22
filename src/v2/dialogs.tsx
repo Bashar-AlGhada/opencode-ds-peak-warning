@@ -59,11 +59,11 @@ type MainChoice =
 
 /**
  * Main round of the v2 /dspeak menu. Rendered via `dialog.show()` with the
- * shared PeakDialogHeader (the same live, colored status header v1 shows:
+ * shared PeakDialogHeader (a live, colored status header:
  * status dot, UTC + local time, next switch with countdown, windows line)
  * above a native keyboard-driven select list. The promise
  * `dialog.select()` has no header slot, so it cannot carry that depth —
- * leaf submenus below stay promise-based, matching v1's host-dialog leaves.
+ * leaf submenus below stay promise-based, matching the host dialog API.
  */
 function showMainMenuV2(ctx: V2MenuCtx): Promise<MainChoice | undefined> {
   const g = ctx.guard?.settings()

@@ -1,4 +1,3 @@
-import type { TuiPluginApi } from "@opencode-ai/plugin/tui"
 import { buildCoverageRuns, formatDuration, formatMinutes, utcMinutes } from "./ranges.ts"
 import { nextTransition, nextTransitionInRuns, statusForDate, statusForRuns } from "./ranges.ts"
 import type { PeakRun } from "./ranges.ts"
@@ -105,7 +104,7 @@ export interface ConfirmDialogCallbacks {
  * whether the host fires onClose synchronously or asynchronously.
  */
 export function confirmDialogCallbacks(
-  api: Pick<TuiPluginApi, "ui">,
+  api: { readonly ui: { readonly dialog: { readonly clear: () => void } } },
   settle: ConfirmSettlement,
 ): ConfirmDialogCallbacks {
   const clear = () => {
@@ -237,10 +236,7 @@ type AnyFn = (...args: any[]) => Promise<unknown>
 
 /**
  * Minimal host surface the prompt guard needs: a client object carrying the
- * session sender plus an optional dispose hook. Both the v1 `TuiPluginApi`
- * and the v2 CLI context satisfy this structurally, so one wrapper serves
- * both generations (v2 passes `{ client: context.client }` and disposes via
- * the cleanup function returned from `setup`).
+ * session sender plus an optional dispose hook.
  */
 export interface PromptGuardHost {
   client?: { session?: unknown }

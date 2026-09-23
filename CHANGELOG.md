@@ -2,6 +2,17 @@
 
 All notable changes to this project will be documented in this file.
 
+## [1.5.2] - 2026-09-23
+
+### Fixed
+
+- Peak guard first-prompt accuracy after `/model` switches: prompt call args
+  are now read in SDK shape (`path.id`, `body.model`), a known session that
+  misses the store fails open instead of inheriting the global default model,
+  and (v2, peak hours only) the guard re-reads the session model from the
+  server in a timeout-guarded fetch, so a prompt that races a model switch
+  resolves the new model instead of the lagging local cache.
+
 ## [1.5.0] - 2026-09-21
 
 ### Added

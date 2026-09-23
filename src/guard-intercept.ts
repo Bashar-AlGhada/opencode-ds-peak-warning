@@ -45,6 +45,14 @@ export interface PromptGuardDeps {
   toast: (message: string, variant?: "info" | "success" | "warning" | "error") => void
   getSessionModel: (sessionID: string) => PromptModel
   getDefaultModel: () => PromptModel
+  /**
+   * Authoritative server read (v2): the server owns the session model, so a
+   * prompt-time fetch wins over the cache when the prompt races a `/model`
+   * switch. Consulted only during peak hours (off-peak skips the RPC — the
+   * model can't affect the decision) and only when the call args carry no
+   * model. Any failure or timeout keeps the cached resolution.
+   */
+  getServerModel?: (sessionID: string) => Promise<PromptModel | undefined>
   /** Called whenever the installed state may have changed. */
   onState?: (installed: boolean) => void
 }
@@ -200,37 +208,118 @@ function str(v: unknown): string | undefined {
 }
 
 /**
+ * Read a {providerID, modelID} pair from one object. The SDK uses `modelID`
+ * while model-selection events and server refs use `id`; accept both.
+ */
+export function modelFromObj(value: unknown): PromptModel | undefined {
+  if (!value || typeof value !== "object") return undefined
+  const r = value as Record<string, unknown>
+  const providerID = str(r.providerID)
+  const modelID = str(r.modelID) ?? str(r.id)
+  if (!providerID && !modelID) return undefined
+  return { providerID, modelID }
+}
+
+/**
  * Resolve the model for one `session.prompt` call. Precedence: explicit call
  * args (authoritative for this send, covers just-switched models and brand
  * new sessions) > stored session model > configured default model.
+ *
+ * Call args are read in every known host shape: flat
+ * `{model, providerID, modelID, sessionID}` and SDK
+ * `{path: {id}, body: {model}}`, plus `sessionId` spellings. A complete
+ * call-args pair wins without consulting the session store (which still
+ * holds the pre-switch model on the first prompt after `/model`); a known
+ * sessionID that misses the store fails open instead of falling back to the
+ * global default (which false-positives for non-DeepSeek sessions whenever
+ * the default is DeepSeek). On v2 the wrapper additionally re-reads the
+ * model from the server during peak hours (see `getServerModel`).
  */
 export function resolvePromptModel(
   params: Record<string, unknown> | undefined | null,
   deps: Pick<PromptGuardDeps, "getSessionModel" | "getDefaultModel">,
 ): PromptModel {
   const p = (params ?? {}) as Record<string, unknown>
-  const nested = p.model as Record<string, unknown> | undefined
-  let providerID = str(nested?.providerID) ?? str(p.providerID)
-  let modelID = str(nested?.modelID) ?? str(p.modelID)
-  if (!providerID || !modelID) {
+  const body = (p.body ?? {}) as Record<string, unknown>
+  const path = (p.path ?? {}) as Record<string, unknown>
+
+  const nested = modelFromObj(p.model) ?? modelFromObj(body.model)
+  const providerID = nested?.providerID ?? str(p.providerID) ?? str(body.providerID)
+  const modelID = nested?.modelID ?? str(p.modelID) ?? str(body.modelID)
+  // Any call-args fragment speaks for this send: use it as-is rather than
+  // papering over it with a stale stored pair.
+  if (providerID || modelID) return { providerID, modelID }
+
+  const sessionID =
+    str(p.sessionID) ??
+    str(p.sessionId) ??
+    str(p.session_id) ??
+    str(path.id) ??
+    str(path.sessionID) ??
+    str(path.sessionId) ??
+    str(body.sessionID) ??
+    str(body.sessionId)
+  if (sessionID) {
     try {
-      const s = deps.getSessionModel(str(p.sessionID) ?? "")
-      providerID = providerID ?? s.providerID
-      modelID = modelID ?? s.modelID
+      const s = deps.getSessionModel(sessionID)
+      return { providerID: s.providerID, modelID: s.modelID }
     } catch {
-      // ignore session lookup errors, fall through to defaults
+      return { providerID: undefined, modelID: undefined }
     }
   }
-  if (!providerID && !modelID) {
-    try {
-      const d = deps.getDefaultModel()
-      providerID = d.providerID
-      modelID = d.modelID
-    } catch {
-      // ignore config lookup errors; unknown model fails open below
-    }
+
+  try {
+    const d = deps.getDefaultModel()
+    return { providerID: d.providerID, modelID: d.modelID }
+  } catch {
+    return { providerID: undefined, modelID: undefined }
   }
-  return { providerID, modelID }
+}
+
+/**
+ * Pull the raw call-args model + session id out of a `session.prompt` call
+ * WITHOUT touching the session store. Used by the wrapper to decide whether
+ * the authoritative server re-read is needed (args already speak for the
+ * send, or there is no session to ask about). Reads shapes only, never
+ * message content.
+ */
+export function describePromptParams(
+  params: Record<string, unknown> | undefined | null,
+): { argModel: PromptModel | null; sessionID: string | null } {
+  const p = (params ?? {}) as Record<string, unknown>
+  const body = (p.body ?? {}) as Record<string, unknown>
+  const path = (p.path ?? {}) as Record<string, unknown>
+  const nested = modelFromObj(p.model) ?? modelFromObj(body.model)
+  const providerID = nested?.providerID ?? str(p.providerID) ?? str(body.providerID)
+  const modelID = nested?.modelID ?? str(p.modelID) ?? str(body.modelID)
+  const sessionID =
+    str(p.sessionID) ??
+    str(p.sessionId) ??
+    str(p.session_id) ??
+    str(path.id) ??
+    str(path.sessionID) ??
+    str(path.sessionId) ??
+    str(body.sessionID) ??
+    str(body.sessionId) ??
+    null
+  return {
+    argModel: providerID || modelID ? { providerID, modelID } : null,
+    sessionID,
+  }
+}
+
+/** Bound for the authoritative server read; the local server answers in ms. */
+export const SERVER_MODEL_TIMEOUT_MS = 1500
+
+/** Race a promise against a timeout (used for the server model read). */
+export function withTimeout<T>(promise: Promise<T>, ms: number): Promise<T> {
+  let timer: ReturnType<typeof setTimeout> | undefined
+  const timeout = new Promise<never>((_, reject) => {
+    timer = setTimeout(() => reject(new Error("timed out")), ms)
+  })
+  return Promise.race([promise, timeout]).finally(() => {
+    if (timer !== undefined) clearTimeout(timer)
+  })
 }
 
 type AnyFn = (...args: any[]) => Promise<unknown>
@@ -292,7 +381,31 @@ export function installPromptGuard(host: PromptGuardHost, deps: PromptGuardDeps)
       let model: PromptModel = {}
       try {
         const params = (args[0] ?? {}) as Record<string, unknown>
+        const described = describePromptParams(params)
         model = resolvePromptModel(params, deps)
+        // Authoritative server read (v2, peak only): the server owns the
+        // session model, so a prompt-time fetch beats the cache when the
+        // prompt races a `/model` switch. Off-peak skips the RPC entirely —
+        // the model cannot affect the decision. Any failure or timeout keeps
+        // the cached resolution, so this can only add freshness, never block.
+        if (deps.getServerModel && !described.argModel && described.sessionID) {
+          let peak = true
+          try {
+            peak = statusForDate(new Date(), deps.ranges()).peak
+          } catch {
+            peak = true
+          }
+          if (peak) {
+            try {
+              const server = await withTimeout(deps.getServerModel(described.sessionID), SERVER_MODEL_TIMEOUT_MS)
+              if (server?.providerID || server?.modelID) {
+                model = { providerID: server.providerID, modelID: server.modelID }
+              }
+            } catch {
+              // server unreachable — cached resolution stands
+            }
+          }
+        }
         const now = new Date()
         decision = shouldGuard({
           now,

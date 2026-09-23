@@ -2,3 +2,4 @@ node_modules/
 .opencode/package.json
 .opencode/bun.lock
 *.log
+use-local-plugin.ps1

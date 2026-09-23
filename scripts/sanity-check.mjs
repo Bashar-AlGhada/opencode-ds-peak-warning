@@ -344,11 +344,14 @@ check("block mode does not flag warn", shouldGuard({ now: wedPeak, ranges: DEFAU
 import {
   confirmDialogCallbacks,
   createConfirmSettlement,
+  describePromptParams,
   formatLastActivity,
   installPromptGuard,
   peakSummary,
   resolvePromptModel,
+  withTimeout,
 } from "../src/guard-intercept.ts"
+import { extractServerModel } from "../src/v2/guard.ts"
 
 // First-wins settlement primitive.
 {
@@ -411,7 +414,9 @@ function mockDialogHost() {
 const ALWAYS_PEAK = [{ start: "00:00", end: "00:00" }] // all-day window peaks at any time
 const NEVER_PEAK = []
 
-// resolvePromptModel precedence: call args > top-level spread > session > default
+// resolvePromptModel precedence: call args (authoritative, every host shape)
+// > session > default (only with no session context); a known session that
+// misses the store fails open instead of inheriting the global default.
 const fakeDeps = {
   getSessionModel: () => ({ providerID: "anthropic", modelID: "claude" }),
   getDefaultModel: () => ({ providerID: "openai", modelID: "gpt" }),
@@ -419,8 +424,15 @@ const fakeDeps = {
 check("model prefers nested args", resolvePromptModel({ model: { providerID: "deepseek", modelID: "deepseek-chat" }, sessionID: "s" }, fakeDeps), { providerID: "deepseek", modelID: "deepseek-chat" })
 check("model reads top-level spread", resolvePromptModel({ providerID: "deepseek", modelID: "deepseek-chat", sessionID: "s" }, fakeDeps), { providerID: "deepseek", modelID: "deepseek-chat" })
 check("model falls back to session", resolvePromptModel({ sessionID: "s" }, fakeDeps), { providerID: "anthropic", modelID: "claude" })
-check("model falls back to default", resolvePromptModel({ sessionID: "s" }, { getSessionModel: () => ({}), getDefaultModel: () => ({ providerID: "deepseek", modelID: "deepseek-chat" }) }), { providerID: "deepseek", modelID: "deepseek-chat" })
+check("model prefers SDK body over stale session", resolvePromptModel({ path: { id: "s" }, body: { model: { providerID: "deepseek", modelID: "deepseek-chat" }, parts: [] } }, fakeDeps), { providerID: "deepseek", modelID: "deepseek-chat" })
+check("model reads SDK session id", resolvePromptModel({ path: { id: "s" }, body: { parts: [] } }, fakeDeps), { providerID: "anthropic", modelID: "claude" })
+check("model reads SDK id spelling", resolvePromptModel({ path: { id: "s" }, body: { model: { providerID: "openai", id: "gpt-6" }, parts: [] } }, fakeDeps), { providerID: "openai", modelID: "gpt-6" })
+check("model ignores stale session when args speak", resolvePromptModel({ sessionID: "s", model: { providerID: "openai", modelID: "gpt-6" } }, { getSessionModel: () => ({ providerID: "deepseek", modelID: "deepseek-chat" }), getDefaultModel: () => ({ providerID: "deepseek", modelID: "deepseek-chat" }) }), { providerID: "openai", modelID: "gpt-6" })
+check("known session miss fails open (no default inherit)", resolvePromptModel({ sessionID: "s" }, { getSessionModel: () => ({}), getDefaultModel: () => ({ providerID: "deepseek", modelID: "deepseek-chat" }) }), { providerID: undefined, modelID: undefined })
+check("model falls back to default without session context", resolvePromptModel({}, { getSessionModel: () => { throw new Error("must not consult store") }, getDefaultModel: () => ({ providerID: "deepseek", modelID: "deepseek-chat" }) }), { providerID: "deepseek", modelID: "deepseek-chat" })
 check("model unknown when all empty", resolvePromptModel({ sessionID: "s" }, { getSessionModel: () => { throw new Error("kv down") }, getDefaultModel: () => { throw new Error("cfg down") } }), { providerID: undefined, modelID: undefined })
+check("describe reads SDK shape", describePromptParams({ path: { id: "s" }, body: { model: { providerID: "openai", modelID: "gpt-6" }, parts: [] } }), { argModel: { providerID: "openai", modelID: "gpt-6" }, sessionID: "s" })
+check("describe empty when no model", describePromptParams({ path: { id: "s" }, body: { parts: [] } }), { argModel: null, sessionID: "s" })
 
 // formatLastActivity labels (sidebar indication)
 check("activity null -> null", formatLastActivity(null), null)
@@ -520,6 +532,55 @@ const DS_ARGS = { sessionID: "s", model: { providerID: "deepseek", modelID: "dee
   await ctx.session.prompt({ sessionID: "s", model: { providerID: "anthropic", modelID: "claude" } })
   check("non-target sends", ctx.sent.length, 1)
   check("non-target reason recorded", ctx.calls.notify.at(-1)?.reason, "non-target-model")
+  handle.uninstall()
+}
+
+// Authoritative server read: beats a stale store on the first prompt after
+// a model switch (the prompt races the cache update).
+check("withTimeout resolves fast", await withTimeout(Promise.resolve(7), 50), 7)
+check("withTimeout rejects slow", await withTimeout(new Promise(() => {}), 5).then(() => "no", () => "yes"), "yes")
+check("server model direct shape", extractServerModel({ model: { providerID: "deepseek", id: "deepseek-chat" } }), { providerID: "deepseek", modelID: "deepseek-chat" })
+check("server model data envelope", extractServerModel({ data: { model: { providerID: "openai", modelID: "gpt" } } }), { providerID: "openai", modelID: "gpt" })
+check("server envelope id not misread", extractServerModel({ id: "ses_1", title: "hi" }), undefined)
+check("server model garbage", extractServerModel(null), undefined)
+{
+  const ctx = { ...mockApi(), ranges: ALWAYS_PEAK, settings: { ...guardBase }, lastAck: 0 }
+  const { deps, tracker } = guardDeps(ctx)
+  const handle = installPromptGuard(ctx.api, {
+    ...deps,
+    getSessionModel: () => ({ providerID: "openai", modelID: "gpt" }),
+    getServerModel: async () => ({ providerID: "deepseek", modelID: "deepseek-chat" }),
+  })
+  await ctx.session.prompt({ sessionID: "s" })
+  check("server beats stale store", tracker.confirmCalls, 1)
+  check("server sends after confirm", ctx.sent.length, 1)
+  handle.uninstall()
+}
+{
+  const ctx = { ...mockApi(), ranges: ALWAYS_PEAK, settings: { ...guardBase }, lastAck: 0 }
+  const { deps, tracker } = guardDeps(ctx)
+  const handle = installPromptGuard(ctx.api, {
+    ...deps,
+    getServerModel: async () => { throw new Error("down") },
+  })
+  // No arg model: the server read is attempted and fails, so the empty
+  // store decides (fail open).
+  await ctx.session.prompt({ sessionID: "s" })
+  check("server failure falls back", tracker.confirmCalls, 0)
+  check("server failure sends", ctx.sent.length, 1)
+  handle.uninstall()
+}
+{
+  const ctx = { ...mockApi(), ranges: NEVER_PEAK, settings: { ...guardBase }, lastAck: 0 }
+  const { deps } = guardDeps(ctx)
+  let calls = 0
+  const handle = installPromptGuard(ctx.api, {
+    ...deps,
+    getServerModel: async () => { calls++; return { providerID: "deepseek", modelID: "deepseek-chat" } },
+  })
+  await ctx.session.prompt({ sessionID: "s" })
+  check("off-peak skips server read", calls, 0)
+  check("off-peak sends", ctx.sent.length, 1)
   handle.uninstall()
 }
 
